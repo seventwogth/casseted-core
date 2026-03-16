@@ -46,13 +46,6 @@ pub fn shader_source(id: ShaderId) -> ShaderSource {
     }
 }
 
-pub fn find_shader(label: &str) -> Option<ShaderSource> {
-    builtin_shaders()
-        .iter()
-        .copied()
-        .find(|shader| shader.label == label)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{BUILTIN_SHADERS, STILL_ANALOG_SHADER, ShaderId, shader_source};

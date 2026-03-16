@@ -2,25 +2,27 @@
 
 `casseted-core` is the foundational Rust workspace for Casseted, an open-source shader and GPU-processing library focused on physically and mathematically grounded analog and VHS-style image transformation.
 
-The repository currently provides only the initial core layout:
+The repository currently provides a compact first milestone:
 
 - a Cargo workspace with small, focused crates
 - a shared shader directory for WGSL sources
 - lightweight docs for architecture and early decisions
 - placeholders for reference assets and examples
 - a small GPU-independent domain model for frame metadata and analog-style signal parameters
+- a first still-image GPU pipeline
+- a CLI utility for running one PNG image through that pipeline
 
-At this stage the project does not implement a full GPU pipeline, real image processing, video support, web targets, or API infrastructure.
+At this stage the project does not implement video support, a multi-pass render graph, web targets, SDK layers, or API infrastructure.
 
 ## Workspace crates
 
 - `casseted-types`: shared frame/image metadata and pixel format types
 - `casseted-signal`: grouped analog-inspired effect parameters for luma, chroma, noise, and tracking
 - `casseted-shaderlib`: built-in WGSL shader source registry
-- `casseted-gpu`: small `wgpu`-backed GPU configuration helpers
-- `casseted-pipeline`: composition layer that ties types, signal settings, and shaders together
-- `casseted-cli`: tiny CLI entry point for inspecting the current scaffold
-- `casseted-testing`: shared test helpers for workspace crates
+- `casseted-gpu`: thin headless `wgpu` runtime setup and shader-module helpers
+- `casseted-pipeline`: first still-image processing pipeline built on the core foundation
+- `casseted-cli`: local PNG-to-PNG CLI utility for developer-facing pipeline checks
+- `casseted-testing`: shared helpers for test images, image diffs, and basic assertions
 
 ## Repository layout
 
@@ -45,7 +47,7 @@ At this stage the project does not implement a full GPU pipeline, real image pro
 
 ## Current status
 
-The workspace is intended as a clean starting point for the next iteration. Every crate contains minimal but meaningful code and is expected to compile together with `cargo check`.
+The workspace now acts as a clean first milestone: it contains one real still-image GPU effect, one working CLI, and a small test/documentation foundation for the next stage of development.
 
 ## CLI
 
@@ -68,3 +70,12 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are used
+
+## Testing
+
+Current testing is intentionally lightweight:
+
+- unit tests for domain and support crates
+- GPU smoke tests for the still-image pipeline
+- a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
+- shared helpers in [`docs/testing.md`](./docs/testing.md)

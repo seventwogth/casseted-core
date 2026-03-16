@@ -19,7 +19,7 @@ This crate should stay free of GPU runtime concerns so it can be used by pipelin
 - noise amounts
 - line/tracking instability
 
-The goal is not to describe every VHS characteristic upfront. The crate only provides a compact settings model and a small `SignalPlan` wrapper that can be consumed by later pipeline stages without being tied to `wgpu` or shader implementation details.
+The goal is not to describe every VHS characteristic upfront. The crate only provides a compact grouped settings model that later pipeline stages can consume without being tied to `wgpu` or shader implementation details.
 
 ## `casseted-shaderlib`
 
@@ -45,3 +45,19 @@ This crate should stay focused on runtime setup and low-level GPU utilities so t
 - `wgpu` execution via `casseted-gpu`
 
 At this stage the crate intentionally implements one small effect pipeline rather than a generalized pass system.
+
+## `casseted-cli`
+
+`casseted-cli` is the developer-facing entry point for local checks. It currently loads one PNG image, runs the still-image pipeline, and writes one PNG result.
+
+The crate intentionally keeps argument parsing and UX simple so it stays useful as a lightweight utility instead of becoming a second configuration layer.
+
+## `casseted-testing`
+
+`casseted-testing` holds small, reusable helpers for workspace tests:
+
+- frame assertions
+- deterministic gradient image generation
+- simple image-difference statistics
+
+It is not a visual regression platform; it only provides enough support to keep smoke tests readable and consistent.

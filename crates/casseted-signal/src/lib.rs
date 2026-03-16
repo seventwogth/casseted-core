@@ -1,7 +1,5 @@
 //! Small signal-domain building blocks for analog-style transforms.
 
-use casseted_types::FrameDescriptor;
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignalSettings {
     pub luma: LumaSettings,
@@ -106,22 +104,9 @@ impl TrackingSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SignalPlan {
-    pub frame: FrameDescriptor,
-    pub settings: SignalSettings,
-}
-
-impl SignalPlan {
-    pub fn new(frame: FrameDescriptor, settings: SignalSettings) -> Self {
-        Self { frame, settings }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ChromaSettings, NoiseSettings, SignalPlan, SignalSettings, TrackingSettings};
-    use casseted_types::FrameDescriptor;
+    use super::{ChromaSettings, NoiseSettings, SignalSettings, TrackingSettings};
 
     #[test]
     fn default_signal_settings_are_neutral() {
@@ -163,10 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn signal_plan_keeps_frame_metadata() {
-        let frame = FrameDescriptor::default();
-        let plan = SignalPlan::new(frame.clone(), SignalSettings::default());
+    fn neutral_settings_remain_copyable_and_comparable() {
+        let left = SignalSettings::default();
+        let right = left;
 
-        assert_eq!(plan.frame, frame);
+        assert_eq!(left, right);
     }
 }

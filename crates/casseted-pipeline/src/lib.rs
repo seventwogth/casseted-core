@@ -409,7 +409,8 @@ fn effect_uniform_bytes(input: &ImageFrame, signal: SignalSettings) -> [u8; 48] 
 mod tests {
     use super::{StillImagePipeline, effect_uniform_bytes, padded_bytes_per_row};
     use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
-    use casseted_types::{FrameDescriptor, FrameSize, ImageFrame, PixelFormat};
+    use casseted_testing::{assert_images_not_identical, gradient_rgba8_image};
+    use casseted_types::FrameSize;
 
     #[test]
     fn pipeline_uses_still_analog_shader() {
@@ -428,7 +429,7 @@ mod tests {
 
     #[test]
     fn uniform_bytes_include_frame_dimensions() {
-        let input = ImageFrame::solid_rgba8(FrameSize::new(8, 4), [10, 20, 30, 255]);
+        let input = gradient_rgba8_image(FrameSize::new(8, 4));
         let bytes = effect_uniform_bytes(&input, StillImagePipeline::default().signal);
 
         assert_eq!(&bytes[0..4], &(8.0_f32).to_ne_bytes());
@@ -443,24 +444,12 @@ mod tests {
             Err(error) => panic!("failed to initialize gpu context: {error}"),
         };
 
-        let size = FrameSize::new(8, 8);
-        let mut data = Vec::with_capacity((size.pixels() * 4) as usize);
-        for y in 0..size.height {
-            for x in 0..size.width {
-                data.extend_from_slice(&[(x * 16) as u8, (y * 16) as u8, ((x + y) * 8) as u8, 255]);
-            }
-        }
-
-        let input = ImageFrame::new(
-            FrameDescriptor::new(size, PixelFormat::Rgba8Unorm, 0),
-            data.clone(),
-        )
-        .expect("test image must be valid");
+        let input = gradient_rgba8_image(FrameSize::new(8, 8));
 
         let output = StillImagePipeline::default()
             .process_with_gpu(&gpu, &input)
             .expect("pipeline should process the image");
 
-        assert_ne!(output.data, data);
+        assert_images_not_identical(&input, &output);
     }
 }

@@ -10,6 +10,9 @@ casseted-pipeline.workspace = true
 casseted-types.workspace = true
 image.workspace = true
 
+[dev-dependencies]
+casseted-testing.workspace = true
+
 [[bin]]
 name = "casseted-cli"
 path = "src/main.rs"

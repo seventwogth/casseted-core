@@ -17,3 +17,4 @@ Further crate notes:
 - [`overview.md`](./overview.md)
 - [`crates.md`](./crates.md)
 - [`pipeline.md`](./pipeline.md)
+- [`../testing.md`](../testing.md)

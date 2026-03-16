@@ -112,6 +112,7 @@ name = "casseted-cli"
 version = "0.1.0"
 dependencies = [
  "casseted-pipeline",
+ "casseted-testing",
  "casseted-types",
  "image",
 ]
@@ -132,6 +133,7 @@ dependencies = [
  "casseted-gpu",
  "casseted-shaderlib",
  "casseted-signal",
+ "casseted-testing",
  "casseted-types",
  "pollster",
  "wgpu",

@@ -240,7 +240,8 @@ fn save_png(path: &Path, image: ImageFrame) -> Result<(), CliError> {
 mod tests {
     use super::{CliError, parse_args, run};
     use casseted_pipeline::PipelineError;
-    use casseted_types::FrameSize;
+    use casseted_testing::{assert_images_not_identical, gradient_rgba8_image};
+    use casseted_types::{FrameDescriptor, ImageFrame, PixelFormat};
     use image::{ImageFormat, RgbaImage};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -282,12 +283,13 @@ mod tests {
         let input_path = std::env::temp_dir().join(format!("casseted-cli-input-{unique}.png"));
         let output_path = std::env::temp_dir().join(format!("casseted-cli-output-{unique}.png"));
 
-        let mut input = RgbaImage::new(8, 8);
-        for y in 0..8 {
-            for x in 0..8 {
-                input.put_pixel(x, y, image::Rgba([(x * 16) as u8, (y * 16) as u8, 96, 255]));
-            }
-        }
+        let source = gradient_rgba8_image(casseted_types::FrameSize::new(8, 8));
+        let input = RgbaImage::from_raw(
+            source.descriptor.size.width,
+            source.descriptor.size.height,
+            source.data.clone(),
+        )
+        .expect("test input should rebuild as an image");
         input
             .save_with_format(&input_path, ImageFormat::Png)
             .expect("input image should be written");
@@ -312,8 +314,16 @@ mod tests {
         let output = image::open(&output_path)
             .expect("output image should be readable")
             .to_rgba8();
-        assert_eq!(output.dimensions(), (FrameSize::new(8, 8).width, 8));
-        assert_ne!(output.into_raw(), input.into_raw());
+        let output = ImageFrame::new(
+            FrameDescriptor::new(
+                source.descriptor.size,
+                PixelFormat::Rgba8Unorm,
+                source.descriptor.frame_index,
+            ),
+            output.into_raw(),
+        )
+        .expect("output image must rebuild as a frame");
+        assert_images_not_identical(&source, &output);
 
         let _ = std::fs::remove_file(&input_path);
         let _ = std::fs::remove_file(&output_path);
