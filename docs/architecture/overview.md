@@ -27,6 +27,12 @@ The key point in the current phase is that the still-image path is now explicit 
 
 This is the current minimal decomposition: it makes model-to-implementation mapping readable without adding intermediate textures, pass scheduling, or a render graph.
 
+The current verification foundation mirrors that structure:
+
+- committed PNG fixtures live in `assets/reference-images/still-pipeline-v1/`
+- `casseted-pipeline` runs stage-oriented reference tests against those fixtures with fixed tolerances
+- `casseted-testing` provides the deterministic source card, PNG helpers, and image-difference assertions
+
 Reference documents:
 
 - [`signal-model-v1.md`](./signal-model-v1.md)

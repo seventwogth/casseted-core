@@ -661,6 +661,9 @@ fn effect_uniform_bytes(
 }
 
 #[cfg(test)]
+mod stage_regression;
+
+#[cfg(test)]
 mod tests {
     use super::{
         StillImagePipeline, effect_uniform_bytes, effect_uniforms, padded_bytes_per_row,

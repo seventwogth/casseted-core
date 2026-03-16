@@ -98,6 +98,24 @@ Why this grouping is used now:
 - it makes the code read in stage order instead of as one monolithic fragment body
 - it gives later WGSL work clear upgrade points without introducing a render graph early
 
+## Visual Regression Mapping
+
+The current visual regression foundation keeps one committed source image plus one committed output PNG per implementation stage in `assets/reference-images/still-pipeline-v1/`.
+
+| Implementation stage | Formulas reference | Uniform focus | WGSL entry points | Reference PNG |
+| --- | --- | --- | --- | --- |
+| Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `apply_input_conditioning()`, `apply_tone_shaping()` | `input-conditioning-tone.png` |
+| Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the fused working path | `sample_working_signal()` | `luma-chroma-transform.png` |
+| Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()` | `luma-degradation.png` |
+| Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | `chroma-degradation.png` |
+| Reconstruction / output | `4.5` plus noise note in `5.2` | `effect.reconstruction_output` | `sample_output_noise()`, `reconstruct_output()` | `reconstruction-output.png` |
+
+Current fixture policy:
+
+- reference comparisons use fixed tolerances for the fused pass outputs
+- stage tests also verify resolved defaults and bounded output changes under small parameter perturbations
+- the pipeline remains single-pass; these fixtures describe logical stages inside that one pass, not separate intermediate textures
+
 ## Stage Intent
 
 ### 1. InputDecode
