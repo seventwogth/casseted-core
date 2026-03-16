@@ -2,7 +2,7 @@
 
 use casseted_gpu::GpuRequirements;
 use casseted_shaderlib::{ShaderSource, find_shader};
-use casseted_signal::{SignalPlan, SignalProfile};
+use casseted_signal::{SignalPlan, SignalSettings};
 use casseted_types::FrameDescriptor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum PipelinePreset {
 pub struct PipelineDefinition {
     pub preset: PipelinePreset,
     pub frame: FrameDescriptor,
-    pub signal: SignalProfile,
+    pub signal: SignalSettings,
     pub shader_name: &'static str,
 }
 
@@ -23,13 +23,13 @@ impl PipelineDefinition {
         Self {
             preset: PipelinePreset::SignalPreview,
             frame,
-            signal: SignalProfile::default(),
+            signal: SignalSettings::default(),
             shader_name: "signal_preview",
         }
     }
 
     pub fn signal_plan(&self) -> SignalPlan {
-        SignalPlan::preview(self.frame.clone(), self.signal)
+        SignalPlan::new(self.frame.clone(), self.signal)
     }
 
     pub fn shader(&self) -> ShaderSource {

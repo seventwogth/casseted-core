@@ -11,3 +11,7 @@ The current repository is intentionally split into small crates with narrow resp
 - `casseted-testing` holds helpers that can be reused as the workspace grows.
 
 This keeps the early core focused while leaving room for later implementation work.
+
+Further crate notes:
+
+- [`crates.md`](./crates.md)

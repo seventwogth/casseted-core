@@ -8,13 +8,14 @@ The repository currently provides only the initial core layout:
 - a shared shader directory for WGSL sources
 - lightweight docs for architecture and early decisions
 - placeholders for reference assets and examples
+- a small GPU-independent domain model for frame metadata and analog-style signal parameters
 
 At this stage the project does not implement a full GPU pipeline, real image processing, video support, web targets, or API infrastructure.
 
 ## Workspace crates
 
-- `casseted-types`: shared domain types such as frame size and pixel format
-- `casseted-signal`: minimal signal-domain configuration for analog-style transforms
+- `casseted-types`: shared frame/image metadata and pixel format types
+- `casseted-signal`: grouped analog-inspired effect parameters for luma, chroma, noise, and tracking
 - `casseted-shaderlib`: built-in WGSL shader source registry
 - `casseted-gpu`: small `wgpu`-backed GPU configuration helpers
 - `casseted-pipeline`: composition layer that ties types, signal settings, and shaders together
