@@ -41,6 +41,26 @@ The current implementation keeps those stages in one render pass, but names them
 | Chroma degradation | `ChromaRecordPath` | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | fused into `still_analog.wgsl` |
 | Reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | fused into `still_analog.wgsl` |
 
+### Current Visual Regression Fixtures
+
+Committed fixtures now live in `assets/reference-images/still-pipeline-v1/`.
+
+| Stage case | Reference PNG | Formulas section | Primary uniform focus | Default resolved values used by the fixture |
+| --- | --- | --- | --- | --- |
+| Input conditioning / tone shaping | `input-conditioning-tone.png` | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.68`, `rho_h = 0.55`, `p_J = 1.10 * s_ref`, `delta_V = 0.75` |
+| Luma/chroma transform | `luma-chroma-transform.png` | `4.2` | none beyond the shared frame block; this is the neutral transform fixture for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
+| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.25 * s_ref`, `alpha_p = 0.075` |
+| Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 1.62 * s_ref`, `r_C = 1.75 * s_ref`, `g_C = 0.92`, `beta_V = 0.25` |
+| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2` | `effect.reconstruction_output` | `a_Y = 0.03`, `a_C = 0.015`, `epsilon_YC = 0.08`, `f = 0` |
+
+Current committed output tolerance for those PNG comparisons:
+
+- `max_changed_bytes = 1024`
+- `max_mean_absolute_difference = 0.35`
+- `max_absolute_difference = 3`
+
+Those tolerances are intentionally small enough to catch behavioral regressions while still allowing minor backend-level float differences in the fused pass.
+
 ## 2. Notation And Variables
 
 ### Coordinates and frame geometry
@@ -89,6 +109,24 @@ The current implementation keeps those stages in one render pass, but names them
 | \(r_Y\) | resolved luma blur radius in pixels | `SignalSettings.luma.blur_px * s_ref` |
 | \(r_\tau\) | resolved chroma delay in pixels | `SignalSettings.chroma.offset_px * s_ref` |
 | \(r_C\) | resolved chroma blur radius in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
+
+### Current range rules used by stage verification
+
+| Uniform term | Current rule in the single-pass implementation |
+| --- | --- |
+| `effect.input_conditioning.x` | `highlight_soft_knee` clamped to `[0, 0.999]` |
+| `effect.input_conditioning.y` | `highlight_compression >= 0` |
+| `effect.input_conditioning.z` | model-projected line jitter is non-negative; current manual preview path passes the supplied amplitude through |
+| `effect.input_conditioning.w` | vertical offset snapshot is signed and currently unbounded in the preview path |
+| `effect.luma_degradation.x` | resolved blur radius `>= 0` |
+| `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.20]` |
+| `effect.chroma_degradation.x` | current model projection is non-negative; manual preview path may supply signed offsets |
+| `effect.chroma_degradation.y` | resolved blur radius `>= 0` |
+| `effect.chroma_degradation.z` | saturation gain `>= 0` |
+| `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
+| `effect.reconstruction_output.xy` | noise amplitudes `>= 0` |
+| `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
+| `effect.reconstruction_output.w` | frame index from `FrameDescriptor.frame_index` |
 
 ## 3. Input And Working Representation
 

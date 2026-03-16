@@ -153,6 +153,7 @@ name = "casseted-testing"
 version = "0.1.0"
 dependencies = [
  "casseted-types",
+ "image",
 ]
 
 [[package]]
