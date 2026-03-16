@@ -13,14 +13,28 @@ This crate should stay free of GPU runtime concerns and avoid collecting test-on
 
 ## `casseted-signal`
 
-`casseted-signal` defines the first minimal parameter model for analog-inspired image degradation. The model is intentionally grouped into a few practical buckets:
+`casseted-signal` now exposes two complementary layers:
+
+- `SignalSettings`, the compact prototype parameter model used by the current still-image shader
+- `VhsModel`, the formal VHS / analog v1 model for future implementation work
+
+The prototype layer remains intentionally grouped into a few practical buckets:
 
 - luma softness
 - chroma offset and bleed
 - noise amounts
 - line/tracking instability
 
-The goal is not to describe every VHS characteristic upfront. The crate only provides a compact grouped settings model that later pipeline stages can consume without being tied to `wgpu` or shader implementation details.
+The formal layer groups parameters by signal responsibility instead:
+
+- input assumptions
+- luma path
+- chroma path
+- transport instability
+- noise and dropouts
+- decode/output reconstruction
+
+This keeps the current prototype useful while giving the repository a stronger domain contract for the next phase.
 
 ## `casseted-shaderlib`
 

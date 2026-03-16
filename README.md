@@ -8,7 +8,7 @@ The repository currently provides a compact first milestone:
 - a shared shader directory for WGSL sources
 - lightweight docs for architecture and early decisions
 - placeholders for reference assets and examples
-- a small GPU-independent domain model for frame metadata and analog-style signal parameters
+- a small GPU-independent domain model for frame metadata, prototype effect controls, and the formal VHS / analog v1 parameter model
 - a first still-image GPU pipeline
 - a CLI utility for running one PNG image through that pipeline
 
@@ -17,7 +17,7 @@ At this stage the project does not implement video support, a multi-pass render 
 ## Workspace crates
 
 - `casseted-types`: shared frame/image metadata and pixel format types
-- `casseted-signal`: grouped analog-inspired effect parameters for luma, chroma, noise, and tracking
+- `casseted-signal`: current prototype effect controls plus the formal VHS / analog v1 signal model
 - `casseted-shaderlib`: built-in WGSL shader source registry
 - `casseted-gpu`: thin headless `wgpu` runtime setup and shader-module helpers
 - `casseted-pipeline`: first still-image processing pipeline built on the core foundation
@@ -54,6 +54,8 @@ The main layer boundary is intentionally simple:
 ## Current status
 
 The workspace now acts as a clean first milestone: it contains one real still-image GPU effect, one working CLI, and a small test/documentation foundation for the next stage of development.
+
+That next stage is now anchored by [`docs/architecture/vhs-model-v1.md`](./docs/architecture/vhs-model-v1.md), which formalizes the signal flow and parameter groups before deeper pipeline changes are introduced.
 
 ## CLI
 

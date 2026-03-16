@@ -17,4 +17,5 @@ Further crate notes:
 - [`overview.md`](./overview.md)
 - [`crates.md`](./crates.md)
 - [`pipeline.md`](./pipeline.md)
+- [`vhs-model-v1.md`](./vhs-model-v1.md)
 - [`../testing.md`](../testing.md)
