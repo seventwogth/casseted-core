@@ -7,31 +7,41 @@ The current real pipeline in `casseted-core` is still intentionally small:
 - shader: `shaders/passes/still_analog.wgsl`
 - output: one processed `ImageFrame` read back to CPU memory
 
-What changed in the current phase is not the runtime shape, but the signal-model alignment inside that pass.
+What changed in the current phase is the internal structure of that pass: the code now names a small set of logical implementation stages instead of presenting the shader as one undifferentiated effect bundle.
 
-## Current signal subset in the pass
+## Current implementation stages
 
-The single pass now implements a narrow but explicit subset of signal-model v1:
+The still-image path currently uses five logical stages:
 
-- input interpretation under `sRGB` / BT.601-like assumptions
-- tone shaping with soft highlight compression
-- `RGB -> YUV` working decomposition
-- luma-oriented horizontal softening
-- chroma delay / blur / saturation degradation
-- reconstruction back to RGB
+1. input conditioning / tone shaping
+2. luma/chroma transform
+3. luma degradation
+4. chroma degradation
+5. reconstruction / output
 
-Secondary prototype terms still integrated into the same pass:
+All five stages are still executed inside one WGSL pass today.
 
-- line-based horizontal instability
-- additive luma/chroma noise
+## Formal-to-implementation mapping
+
+| Implementation stage | Formal v1 stage coverage | Current code location | Current pass boundary |
+| --- | --- | --- | --- |
+| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, and the currently spatial part of `TransportInstability` | `resolve_input_conditioning_stage()` in `casseted-pipeline`, `apply_input_conditioning()` and `apply_tone_shaping()` in WGSL | fused into `still_analog.wgsl` |
+| Luma/chroma transform | `RgbToLumaChroma` | `sample_working_signal()` in WGSL | fused into `still_analog.wgsl` |
+| Luma degradation | `LumaRecordPath` | `resolve_luma_degradation_stage()` and `degrade_luma()` | fused into `still_analog.wgsl` |
+| Chroma degradation | `ChromaRecordPath` | `resolve_chroma_degradation_stage()` and `degrade_chroma()` | fused into `still_analog.wgsl` |
+| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) plus `DecodeOutput` | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | fused into `still_analog.wgsl` |
+
+Important detail:
+the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it is grouped into input conditioning rather than split into its own pass.
 
 ## Projection layer
 
-The pipeline now owns a very small projection bridge from the formal domain model into the single-pass preview path:
+The pipeline owns a narrow projection bridge from the formal domain model into the current fused pass:
 
 - `StillImagePipeline::from_vhs_model()`
-- `prototype_signal_from_model()`
-- `effect_uniforms()`
+- `project_vhs_model_to_preview_signal()`
+- `resolve_still_stages()`
+- `EffectUniforms`
 
 This is intentionally narrow. It does not introduce:
 
@@ -42,14 +52,14 @@ This is intentionally narrow. It does not introduce:
 
 ## Why it stays single-pass for now
 
-Keeping the current stage in one pass is still the right tradeoff because it preserves:
+Keeping the current path in one pass is still the right tradeoff because the implementation-stage split is now clear enough for further work, while preserving:
 
 - the existing clean crate boundaries
 - the thin `casseted-gpu` runtime
 - the shader asset bridge in `casseted-pipeline`
 - a compact implementation path for the first algorithmic phase
 
-The pass is now better viewed as a reference-consistent fused subset of v1, not as an accidental prototype.
+Splitting into multiple passes would add temporary textures and more orchestration, but it would not yet buy enough clarity to justify the weight.
 
 ## Deferred on purpose
 

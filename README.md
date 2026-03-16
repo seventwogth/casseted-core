@@ -28,7 +28,7 @@ The main layer boundary is intentionally simple:
 
 - `casseted-shaderlib` owns repository shader assets
 - `casseted-gpu` owns low-level runtime setup
-- `casseted-pipeline` is the layer that bridges the two for real processing
+- `casseted-pipeline` is the layer that bridges the two for real processing and currently resolves the still path into five logical implementation stages inside one fused pass
 
 ## Repository layout
 
@@ -54,6 +54,12 @@ The main layer boundary is intentionally simple:
 ## Current status
 
 The workspace now acts as a clean first milestone plus the first algorithmic signal-model step: it contains one real still-image GPU effect, one working CLI, and documentation that ties the current implementation to the formal v1 model.
+
+The current still-image path is deliberately compact:
+
+- five logical implementation stages
+- one WGSL render pass
+- no render graph or multi-pass orchestration yet
 
 The current implementation path is anchored by:
 

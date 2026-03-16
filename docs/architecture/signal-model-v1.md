@@ -72,6 +72,32 @@ R'G'B' input
 
 The stage order is canonical even if a concrete GPU implementation fuses several stages into one pass.
 
+## Current Implementation Grouping
+
+The current still-image implementation keeps the formal eight-stage order above, but groups it into five smaller engineering stages:
+
+1. input conditioning / tone shaping
+2. luma/chroma transform
+3. luma degradation
+4. chroma degradation
+5. reconstruction / output
+
+Current mapping:
+
+| Implementation stage | Formal v1 stages included | Current WGSL pass |
+| --- | --- | --- |
+| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, plus the currently spatial subset of `TransportInstability` | fused into `still_analog.wgsl` |
+| Luma/chroma transform | `RgbToLumaChroma` | fused into `still_analog.wgsl` |
+| Luma degradation | `LumaRecordPath` | fused into `still_analog.wgsl` |
+| Chroma degradation | `ChromaRecordPath` | fused into `still_analog.wgsl` |
+| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | fused into `still_analog.wgsl` |
+
+Why this grouping is used now:
+
+- it keeps the runtime compact and preserves the working one-pass path
+- it makes the code read in stage order instead of as one monolithic fragment body
+- it gives later WGSL work clear upgrade points without introducing a render graph early
+
 ## Stage Intent
 
 ### 1. InputDecode
@@ -197,11 +223,12 @@ That preview layer is not a competing domain model. It is a narrow control surfa
 
 ## Mapping To The Current Pipeline
 
-The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the single-pass preview path:
+The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the fused still-pass implementation:
 
 - `StillImagePipeline::from_vhs_model()` creates the current still-preview configuration from a formal `VhsModel`
-- `prototype_signal_from_model()` converts the formal model into compact preview controls
-- `effect_uniforms()` resolves those controls into the WGSL uniform block used by `shaders/passes/still_analog.wgsl`
+- `project_vhs_model_to_preview_signal()` converts the formal model into compact preview controls
+- `resolve_still_stages()` groups those controls into the five implementation stages
+- `EffectUniforms` packs those stage controls into the WGSL uniform block used by `shaders/passes/still_analog.wgsl`
 
 There are two intentional modes:
 
@@ -211,33 +238,37 @@ There are two intentional modes:
 Important constraint:
 this is a projection layer, not a graph engine and not a new runtime abstraction.
 
-Current implemented mapping:
+Current stage-aligned mapping:
 
-- `VhsToneSettings` -> `SignalSettings.tone` -> `effect.tone_luma.xy`
-- `VhsLumaSettings.bandwidth_mhz` -> preview luma blur proxy -> `effect.tone_luma.z`
-- `VhsLumaSettings.preemphasis_db` -> small detail residual gain -> `effect.tone_luma.w`
-- `VhsChromaSettings.delay_us` -> preview chroma offset proxy -> `effect.chroma.x`
-- `VhsChromaSettings.bandwidth_khz` -> preview chroma blur proxy -> `effect.chroma.y`
-- `VhsChromaSettings.saturation_gain` -> `effect.chroma.z`
-- `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma.w`
-- `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.noise_decode.z`
+- input conditioning / tone shaping:
+  `VhsToneSettings` -> `SignalSettings.tone` -> `effect.input_conditioning.xy`
+- luma degradation:
+  `VhsLumaSettings.bandwidth_mhz` -> preview luma blur proxy -> `effect.luma_degradation.x`
+  `VhsLumaSettings.preemphasis_db` -> small detail residual gain -> `effect.luma_degradation.y`
+- chroma degradation:
+  `VhsChromaSettings.delay_us` -> preview chroma offset proxy -> `effect.chroma_degradation.x`
+  `VhsChromaSettings.bandwidth_khz` -> preview chroma blur proxy -> `effect.chroma_degradation.y`
+  `VhsChromaSettings.saturation_gain` -> `effect.chroma_degradation.z`
+  `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
+- reconstruction / output:
+  `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
 
 Secondary mappings that are still present but not the main focus of this phase:
 
-- `VhsTransportSettings.line_jitter_us` -> preview line jitter proxy
-- `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot
-- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> preview noise amplitudes
+- `VhsTransportSettings.line_jitter_us` -> input-conditioning jitter proxy -> `effect.input_conditioning.z`
+- `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot -> `effect.input_conditioning.w`
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> reconstruction noise amplitudes -> `effect.reconstruction_output.xy`
 
 ## Implementation Status
 
-The current repository now implements a reference-consistent subset of v1 in one WGSL pass:
+The current repository now implements a reference-consistent subset of v1 as five logical stages fused into one WGSL pass:
 
-- tone shaping
+- input conditioning / tone shaping
 - `RGB -> YUV` decomposition
 - luma low-pass/detail attenuation
 - chroma delay/blur/saturation degradation
 - reconstruction back to RGB
-- line jitter and additive noise as secondary terms
+- line jitter and additive noise as integrated secondary terms
 
 Still deferred:
 

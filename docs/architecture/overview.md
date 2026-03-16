@@ -11,13 +11,21 @@ Current data flow:
 
 - CLI code reads a PNG into an `ImageFrame`
 - pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into the current still-preview controls
-- pipeline code resolves those controls into a compact WGSL uniform block
+- `casseted-pipeline` resolves those controls into five logical implementation stages:
+  `input conditioning / tone shaping`, `luma/chroma transform`, `luma degradation`,
+  `chroma degradation`, and `reconstruction / output`
+- those stage-aligned controls are packed into one compact WGSL uniform block for the current fused still pass
 - `casseted-shaderlib` resolves the embedded WGSL source
-- `casseted-gpu` compiles and executes the fullscreen pass
+- `casseted-gpu` compiles and executes the single fullscreen pass that contains all five logical stages
 - the processed image is copied back to CPU memory as an `ImageFrame`
 - CLI code writes the result as PNG
 
-The key point in the current phase is that the single-pass implementation is now anchored to a formal signal contract instead of being just an ad-hoc shader parameter bundle.
+The key point in the current phase is that the still-image path is now explicit at two levels:
+
+- the canonical signal model in `casseted-signal` still defines the eight formal v1 stages
+- the working GPU path groups them into five implementation stages while remaining one render pass
+
+This is the current minimal decomposition: it makes model-to-implementation mapping readable without adding intermediate textures, pass scheduling, or a render graph.
 
 Reference documents:
 
