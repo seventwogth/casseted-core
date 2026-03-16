@@ -1,0 +1,12 @@
+[package]
+name = "casseted-signal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+casseted-types.workspace = true
+
+[lib]
+path = "src/lib.rs"

@@ -1,0 +1,15 @@
+[package]
+name = "casseted-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+casseted-gpu.workspace = true
+casseted-shaderlib.workspace = true
+casseted-signal.workspace = true
+casseted-types.workspace = true
+
+[lib]
+path = "src/lib.rs"
