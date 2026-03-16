@@ -18,4 +18,5 @@ Further crate notes:
 - [`crates.md`](./crates.md)
 - [`pipeline.md`](./pipeline.md)
 - [`signal-model-v1.md`](./signal-model-v1.md)
+- [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)
 - [`../testing.md`](../testing.md)

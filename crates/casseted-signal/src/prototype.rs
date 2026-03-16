@@ -2,6 +2,7 @@
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignalSettings {
+    pub tone: ToneSettings,
     pub luma: LumaSettings,
     pub chroma: ChromaSettings,
     pub noise: NoiseSettings,
@@ -11,6 +12,7 @@ pub struct SignalSettings {
 impl SignalSettings {
     pub const fn neutral() -> Self {
         Self {
+            tone: ToneSettings::neutral(),
             luma: LumaSettings::neutral(),
             chroma: ChromaSettings::neutral(),
             noise: NoiseSettings::neutral(),
@@ -19,7 +21,8 @@ impl SignalSettings {
     }
 
     pub fn is_neutral(&self) -> bool {
-        self.luma.is_neutral()
+        self.tone.is_neutral()
+            && self.luma.is_neutral()
             && self.chroma.is_neutral()
             && self.noise.is_neutral()
             && self.tracking.is_neutral()
@@ -29,6 +32,25 @@ impl SignalSettings {
 impl Default for SignalSettings {
     fn default() -> Self {
         Self::neutral()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToneSettings {
+    pub highlight_soft_knee: f32,
+    pub highlight_compression: f32,
+}
+
+impl ToneSettings {
+    pub const fn neutral() -> Self {
+        Self {
+            highlight_soft_knee: 1.0,
+            highlight_compression: 0.0,
+        }
+    }
+
+    pub fn is_neutral(&self) -> bool {
+        self.highlight_soft_knee == 1.0 && self.highlight_compression == 0.0
     }
 }
 
@@ -51,6 +73,7 @@ impl LumaSettings {
 pub struct ChromaSettings {
     pub offset_px: f32,
     pub bleed_px: f32,
+    pub saturation: f32,
 }
 
 impl ChromaSettings {
@@ -58,11 +81,12 @@ impl ChromaSettings {
         Self {
             offset_px: 0.0,
             bleed_px: 0.0,
+            saturation: 1.0,
         }
     }
 
     pub fn is_neutral(&self) -> bool {
-        self.offset_px == 0.0 && self.bleed_px == 0.0
+        self.offset_px == 0.0 && self.bleed_px == 0.0 && self.saturation == 1.0
     }
 }
 
@@ -106,7 +130,7 @@ impl TrackingSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChromaSettings, NoiseSettings, SignalSettings, TrackingSettings};
+    use super::{ChromaSettings, NoiseSettings, SignalSettings, ToneSettings, TrackingSettings};
 
     #[test]
     fn default_signal_settings_are_neutral() {
@@ -116,9 +140,27 @@ mod tests {
     #[test]
     fn non_zero_chroma_settings_are_not_neutral() {
         let settings = SignalSettings {
+            tone: ToneSettings {
+                highlight_soft_knee: 0.72,
+                highlight_compression: 0.35,
+            },
             chroma: ChromaSettings {
                 offset_px: 1.5,
                 bleed_px: 2.0,
+                saturation: 0.95,
+            },
+            ..SignalSettings::default()
+        };
+
+        assert!(!settings.is_neutral());
+    }
+
+    #[test]
+    fn tone_settings_are_part_of_neutrality_check() {
+        let settings = SignalSettings {
+            tone: ToneSettings {
+                highlight_soft_knee: 0.75,
+                highlight_compression: 0.30,
             },
             ..SignalSettings::default()
         };

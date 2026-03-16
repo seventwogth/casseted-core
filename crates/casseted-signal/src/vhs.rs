@@ -60,6 +60,8 @@ pub enum OutputTransfer {
 pub enum VhsSignalStage {
     /// Normalize the input frame into the working assumptions for still-image v1.
     InputDecode,
+    /// Apply tone shaping before the signal is split into luma/chroma branches.
+    ToneShaping,
     /// Convert gamma-coded RGB into a luma/chroma representation for later loss modeling.
     RgbToLumaChroma,
     /// Apply luma-oriented bandwidth loss and detail shaping.
@@ -78,6 +80,7 @@ impl VhsSignalStage {
     pub const fn label(self) -> &'static str {
         match self {
             Self::InputDecode => "input_decode",
+            Self::ToneShaping => "tone_shaping",
             Self::RgbToLumaChroma => "rgb_to_luma_chroma",
             Self::LumaRecordPath => "luma_record_path",
             Self::ChromaRecordPath => "chroma_record_path",
@@ -88,8 +91,9 @@ impl VhsSignalStage {
     }
 }
 
-pub const VHS_SIGNAL_FLOW_V1: [VhsSignalStage; 7] = [
+pub const VHS_SIGNAL_FLOW_V1: [VhsSignalStage; 8] = [
     VhsSignalStage::InputDecode,
+    VhsSignalStage::ToneShaping,
     VhsSignalStage::RgbToLumaChroma,
     VhsSignalStage::LumaRecordPath,
     VhsSignalStage::ChromaRecordPath,
@@ -102,6 +106,7 @@ pub const VHS_SIGNAL_FLOW_V1: [VhsSignalStage; 7] = [
 pub struct VhsModel {
     pub standard: VideoStandard,
     pub input: VhsInputSettings,
+    pub tone: VhsToneSettings,
     pub luma: VhsLumaSettings,
     pub chroma: VhsChromaSettings,
     pub transport: VhsTransportSettings,
@@ -124,6 +129,10 @@ impl VhsModel {
                 matrix: VideoMatrix::Bt601,
                 transfer: InputTransfer::Srgb,
                 temporal_sampling: TemporalSampling::ProgressiveFrame,
+            },
+            tone: VhsToneSettings {
+                highlight_soft_knee: 0.72,
+                highlight_compression: 0.35,
             },
             luma: VhsLumaSettings {
                 bandwidth_mhz: 3.0,
@@ -163,6 +172,10 @@ impl VhsModel {
                 matrix: VideoMatrix::Bt601,
                 transfer: InputTransfer::Srgb,
                 temporal_sampling: TemporalSampling::ProgressiveFrame,
+            },
+            tone: VhsToneSettings {
+                highlight_soft_knee: 0.74,
+                highlight_compression: 0.30,
             },
             luma: VhsLumaSettings {
                 bandwidth_mhz: 3.0,
@@ -214,6 +227,14 @@ pub struct VhsInputSettings {
     pub transfer: InputTransfer,
     /// Temporal interpretation of the source frame semantics.
     pub temporal_sampling: TemporalSampling,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VhsToneSettings {
+    /// Luma threshold where the soft-knee highlight rolloff begins.
+    pub highlight_soft_knee: f32,
+    /// Compression strength applied above the soft-knee threshold.
+    pub highlight_compression: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -289,6 +310,7 @@ mod tests {
             model.input.temporal_sampling,
             TemporalSampling::ProgressiveFrame
         );
+        assert_eq!(model.tone.highlight_soft_knee, 0.72);
     }
 
     #[test]
@@ -315,6 +337,7 @@ mod tests {
             VHS_SIGNAL_FLOW_V1,
             [
                 VhsSignalStage::InputDecode,
+                VhsSignalStage::ToneShaping,
                 VhsSignalStage::RgbToLumaChroma,
                 VhsSignalStage::LumaRecordPath,
                 VhsSignalStage::ChromaRecordPath,

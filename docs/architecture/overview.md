@@ -1,21 +1,25 @@
 # Overview
 
-The current `casseted-core` foundation is intentionally small and split into four layers:
+The current `casseted-core` workspace is intentionally split into four layers:
 
-1. Domain layer: `casseted-types` and `casseted-signal` describe frame metadata, prototype shader controls, and the formal VHS / analog v1 signal model.
-2. Asset/runtime layer: `casseted-shaderlib` embeds WGSL shaders from the repository, while `casseted-gpu` owns headless `wgpu` setup.
-3. Composition layer: `casseted-pipeline` now runs the first still-image render pass and returns processed pixels.
-4. Developer tooling layer: `casseted-cli` and `casseted-testing` support local verification and smoke-level checks.
+1. Domain layer: `casseted-types` and `casseted-signal`
+2. Asset/runtime layer: `casseted-shaderlib` and `casseted-gpu`
+3. Composition layer: `casseted-pipeline`
+4. Developer tooling layer: `casseted-cli` and `casseted-testing`
 
 Current data flow:
 
-- CLI code reads a PNG image into an `ImageFrame`
-- pipeline code chooses a built-in shader identifier and builds a small uniform block from `SignalSettings`
-- shaderlib resolves it to WGSL source embedded from `shaders/passes/`
-- gpu code compiles raw WGSL provided by the pipeline and executes a fullscreen pass
-- the processed texture is copied back to CPU memory as an `ImageFrame`
-- CLI code writes the processed image back to disk as PNG
+- CLI code reads a PNG into an `ImageFrame`
+- pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into the current still-preview controls
+- pipeline code resolves those controls into a compact WGSL uniform block
+- `casseted-shaderlib` resolves the embedded WGSL source
+- `casseted-gpu` compiles and executes the fullscreen pass
+- the processed image is copied back to CPU memory as an `ImageFrame`
+- CLI code writes the result as PNG
 
-This keeps shader loading and GPU runtime concerns concrete, while leaving more advanced image processing, caching, and multi-pass orchestration for later stages.
+The key point in the current phase is that the single-pass implementation is now anchored to a formal signal contract instead of being just an ad-hoc shader parameter bundle.
 
-For the next phase, the signal model itself is specified separately in [`signal-model-v1.md`](./signal-model-v1.md) so future implementation work can grow from an explicit domain contract instead of ad-hoc shader parameters.
+Reference documents:
+
+- [`signal-model-v1.md`](./signal-model-v1.md)
+- [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)

@@ -2,81 +2,58 @@
 
 ## `casseted-types`
 
-`casseted-types` contains the small, dependency-light types that are expected to be shared across the core workspace:
+`casseted-types` still contains only the dependency-light frame and image types shared across the workspace:
 
-- frame/image size
-- pixel format
-- frame descriptor metadata
-- owned image buffers
+- `FrameSize`
+- `PixelFormat`
+- `FrameDescriptor`
+- `ImageFrame`
 
-This crate should stay free of GPU runtime concerns and avoid collecting test-only conveniences, so it can be used by pipeline planning, CPU-side orchestration, and future serialization work.
-
-For signal-model v1, no new signal-specific types are moved here yet. The current `FrameDescriptor`, `FrameSize`, `PixelFormat`, and `ImageFrame` remain sufficient because the new work is about signal semantics, not a new shared frame container API.
+No signal-specific types were moved here in the current phase.
 
 ## `casseted-signal`
 
-`casseted-signal` now exposes two complementary layers:
+`casseted-signal` now owns both:
 
-- `SignalSettings`, the compact prototype parameter model used by the current still-image shader
-- `VhsModel`, the formal VHS / analog v1 model for future implementation work
+- the formal VHS / analog v1 domain model in `VhsModel`
+- the compact still-preview control layer in `SignalSettings`
 
-The prototype layer remains intentionally grouped into a few practical buckets:
-
-- luma softness
-- chroma offset and bleed
-- noise amounts
-- line/tracking instability
-
-The formal layer groups parameters by signal responsibility instead:
+The formal layer is grouped by signal responsibility:
 
 - input assumptions
+- tone shaping
 - luma path
 - chroma path
 - transport instability
-- noise and dropouts
-- decode/output reconstruction
+- noise and corruption
+- decode / reconstruction
 
-This keeps the current prototype useful while giving the repository a stronger domain contract for the next phase.
+The compact layer is deliberately smaller and only covers the currently fused still-pass controls.
 
 ## `casseted-shaderlib`
 
-`casseted-shaderlib` keeps the repository-owned WGSL sources addressable from Rust code. It exposes a tiny shader registry with stable identifiers and embedded source strings, without adding a custom include or asset pipeline.
+`casseted-shaderlib` keeps repository WGSL assets embedded and addressable by stable shader identifiers.
 
 ## `casseted-gpu`
 
-`casseted-gpu` is the thin `wgpu` integration layer for the workspace. It currently provides:
-
-- headless `Instance` / `Adapter` / `Device` / `Queue` initialization
-- a compact GPU context descriptor
-- helper functions for building shader modules from raw WGSL
-
-This crate stays intentionally ignorant of repository shader identifiers. `casseted-pipeline` is the layer that bridges `casseted-shaderlib` assets to GPU execution.
+`casseted-gpu` remains the thin `wgpu` runtime layer. It still knows nothing about the shader registry or signal model.
 
 ## `casseted-pipeline`
 
-`casseted-pipeline` now contains the first concrete still-image processing path. It owns the compact render-to-texture flow that connects:
+`casseted-pipeline` remains the orchestration layer that bridges:
 
-- `ImageFrame` input data
-- `SignalSettings` domain parameters
-- built-in WGSL shader lookup from `casseted-shaderlib`
-- `wgpu` execution via `casseted-gpu`
+- `ImageFrame`
+- `SignalSettings` / `VhsModel`
+- embedded shader assets from `casseted-shaderlib`
+- `wgpu` execution from `casseted-gpu`
 
-At this stage the crate intentionally implements one small effect pipeline rather than a generalized pass system.
-
-The next responsibility for this crate is not a runtime rewrite, but a projection layer from `VhsModel` into concrete still-image processing stages.
+Important change in the current phase:
+this crate now contains a narrow projection from the formal signal model into the current single-pass implementation, but it still does not become a graph engine.
 
 ## `casseted-cli`
 
-`casseted-cli` is the developer-facing entry point for local checks. It currently loads one PNG image, runs the still-image pipeline, and writes one PNG result.
-
-The crate intentionally keeps argument parsing and UX simple so it stays useful as a lightweight utility instead of becoming a second configuration layer.
+`casseted-cli` remains a developer utility for running one PNG image through the current still-image pipeline. It still does not own domain logic beyond simple flag-to-setting overrides.
 
 ## `casseted-testing`
 
-`casseted-testing` holds small, reusable helpers for workspace tests:
-
-- frame assertions
-- deterministic gradient image generation
-- simple image-difference statistics
-
-It is not a visual regression platform; it only provides enough support to keep smoke tests readable and consistent.
+`casseted-testing` remains a small helper crate for deterministic test images and basic frame assertions.

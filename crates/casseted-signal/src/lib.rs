@@ -10,10 +10,10 @@ mod prototype;
 mod vhs;
 
 pub use prototype::{
-    ChromaSettings, LumaSettings, NoiseSettings, SignalSettings, TrackingSettings,
+    ChromaSettings, LumaSettings, NoiseSettings, SignalSettings, ToneSettings, TrackingSettings,
 };
 pub use vhs::{
     InputTransfer, OutputTransfer, TemporalSampling, VHS_SIGNAL_FLOW_V1, VhsChromaSettings,
     VhsDecodeSettings, VhsInputSettings, VhsLumaSettings, VhsModel, VhsNoiseSettings,
-    VhsSignalStage, VhsTransportSettings, VideoMatrix, VideoStandard,
+    VhsSignalStage, VhsToneSettings, VhsTransportSettings, VideoMatrix, VideoStandard,
 };

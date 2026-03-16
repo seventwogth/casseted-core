@@ -8,8 +8,8 @@ The repository currently provides a compact first milestone:
 - a shared shader directory for WGSL sources
 - lightweight docs for architecture and early decisions
 - placeholders for reference assets and examples
-- a small GPU-independent domain model for frame metadata, prototype effect controls, and the formal VHS / analog v1 parameter model
-- a first still-image GPU pipeline
+- a small GPU-independent domain model for frame metadata, current still-preview controls, and the formal VHS / analog v1 parameter model
+- a first still-image GPU pipeline that now implements a model-aligned subset of signal-model v1
 - a CLI utility for running one PNG image through that pipeline
 
 At this stage the project does not implement video support, a multi-pass render graph, web targets, SDK layers, or API infrastructure.
@@ -53,9 +53,12 @@ The main layer boundary is intentionally simple:
 
 ## Current status
 
-The workspace now acts as a clean first milestone: it contains one real still-image GPU effect, one working CLI, and a small test/documentation foundation for the next stage of development.
+The workspace now acts as a clean first milestone plus the first algorithmic signal-model step: it contains one real still-image GPU effect, one working CLI, and documentation that ties the current implementation to the formal v1 model.
 
-That next stage is now anchored by [`docs/architecture/signal-model-v1.md`](./docs/architecture/signal-model-v1.md), which formalizes the signal flow and parameter groups before deeper pipeline changes are introduced.
+The current implementation path is anchored by:
+
+- [`docs/architecture/signal-model-v1.md`](./docs/architecture/signal-model-v1.md)
+- [`docs/math/signal-model-v1-formulas.md`](./docs/math/signal-model-v1-formulas.md)
 
 ## CLI
 
@@ -77,7 +80,7 @@ Current notes:
 
 - input is read as PNG
 - output is written as PNG
-- if no flags are provided, the built-in mild analog defaults are used
+- if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
 
 ## Testing
 

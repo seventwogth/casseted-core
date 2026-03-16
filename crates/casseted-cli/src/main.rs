@@ -110,10 +110,13 @@ fn run(args: Vec<String>) -> Result<(), CliError> {
     println!("output: {}", cli.output.display());
     println!("shader: {}", pipeline.shader_id.label());
     println!(
-        "effect: luma_blur={} chroma_offset={} chroma_bleed={} luma_noise={} chroma_noise={} line_jitter={}",
+        "effect: highlight_knee={} highlight_compression={} luma_blur={} chroma_offset={} chroma_bleed={} chroma_saturation={} luma_noise={} chroma_noise={} line_jitter={}",
+        pipeline.signal.tone.highlight_soft_knee,
+        pipeline.signal.tone.highlight_compression,
         pipeline.signal.luma.blur_px,
         pipeline.signal.chroma.offset_px,
         pipeline.signal.chroma.bleed_px,
+        pipeline.signal.chroma.saturation,
         pipeline.signal.noise.luma_amount,
         pipeline.signal.noise.chroma_amount,
         pipeline.signal.tracking.line_jitter_px

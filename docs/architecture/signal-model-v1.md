@@ -2,289 +2,254 @@
 
 This document defines the first formal still-image signal model for `casseted-core`.
 
-The purpose of v1 is not to fully emulate a VHS deck or to rewrite the runtime immediately. The goal is to make one domain-meaningful model explicit enough that future WGSL passes, pipeline planning, and presets all grow from the same foundation.
+It is the architectural companion to the formula-level reference in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md). The architecture document states what the model is and where it lives. The formulas document states the concrete discrete approximations used by the current implementation.
 
-Core goals:
+The purpose of v1 is not to emulate an entire VHS deck. The goal is to keep one canonical, signal-oriented chain stable enough that later WGSL work expands a known model instead of accumulating ad-hoc filters.
 
-- establish a canonical still-image signal-flow for v1
-- separate physically/signally motivated stages from engineering approximations
-- define the minimum parameter groups that belong in the domain model
-- keep current crate boundaries intact while preparing the next algorithmic phase
+The corresponding domain types live in `casseted-signal` as:
 
-The corresponding domain types live in `casseted-signal` as `VhsModel`, `VhsSignalStage`, and the `Vhs*Settings` groups.
+- `VhsModel`
+- `VhsSignalStage`
+- `VhsToneSettings`
+- `VhsInputSettings`
+- `VhsLumaSettings`
+- `VhsChromaSettings`
+- `VhsTransportSettings`
+- `VhsNoiseSettings`
+- `VhsDecodeSettings`
 
 ## Boundaries
 
-v1 models a single-generation consumer VHS-like playback look starting from an already decoded digital still image.
+v1 models a single still-frame projection of consumer VHS-like playback starting from an already-decoded digital image.
 
 Inside the model:
 
-- input normalization into a defined working interpretation
+- input interpretation under explicit transfer and matrix assumptions
+- tone shaping with soft highlight compression
 - RGB to luma/chroma decomposition
-- luma and chroma degradation as separate signal paths
-- line-wise transport instability that can be meaningfully projected onto a still frame
-- additive noise and dropout-like corruption
-- reconstruction back into display RGB
+- separate luma and chroma degradation paths
+- still-frame transport instability that can be expressed spatially
+- additive noise and dropout-style corruption
+- reconstruction back to display RGB
 
 Explicitly outside the model:
 
-- exact RF carrier simulation and FM sideband behavior
-- physical helical-scan geometry as a deck emulator
-- AGC, servo control loops, and deck calibration dynamics
-- true video/time-sequence behavior beyond what a still-frame snapshot can justify
+- RF carrier or FM sideband simulation
+- deck-accurate helical-scan geometry
+- AGC and servo control loops
+- video-sequence behavior as the primary implementation target
 - multi-generation dubbing loss
 - audio-path simulation
 
-This boundary is intentional: v1 is meant to be signal-domain accurate enough to organize implementation work, while remaining small enough to integrate into the current workspace.
+This boundary is deliberate: the model should stay signal-motivated without forcing a runtime rewrite.
 
 ## Canonical Signal Flow
 
 `casseted-signal` exposes the canonical stage order as `VHS_SIGNAL_FLOW_V1`:
 
 1. `InputDecode`
-2. `RgbToLumaChroma`
-3. `LumaRecordPath`
-4. `ChromaRecordPath`
-5. `TransportInstability`
-6. `NoiseAndDropouts`
-7. `DecodeOutput`
+2. `ToneShaping`
+3. `RgbToLumaChroma`
+4. `LumaRecordPath`
+5. `ChromaRecordPath`
+6. `TransportInstability`
+7. `NoiseAndDropouts`
+8. `DecodeOutput`
 
 Conceptually:
 
 ```text
 R'G'B' input
-  -> normalize transfer/matrix assumptions
+  -> normalize input assumptions
+  -> apply tone rolloff / soft highlight compression
   -> decompose into luma/chroma
   -> degrade luma bandwidth/detail
-  -> degrade chroma bandwidth, delay, and phase
+  -> degrade chroma bandwidth / delay / saturation
   -> apply line-wise spatial instability
-  -> inject noise and dropout-like corruption
+  -> inject noise and optional corruption
   -> reconstruct output RGB
 ```
 
-The stage order is canonical for v1 even if future GPU implementations fuse or split stages differently.
+The stage order is canonical even if a concrete GPU implementation fuses several stages into one pass.
 
-## Stage Breakdown
+## Stage Intent
 
-### 1. Input Representation
-
-Purpose:
-bring the incoming image into a stable working interpretation before any analog-style degradation is applied.
-
-Mathematical meaning:
-the input is treated as gamma-coded RGB with an explicit transfer assumption and luma/chroma matrix selection.
-
-Expected visual effect:
-by itself none; this stage exists to prevent the rest of the model from depending on hidden color assumptions.
-
-Physical plausibility:
-medium. It is physically motivated in the sense that analog degradation happens on encoded signals, but the exact camera/decoder chain is deliberately collapsed into one normalized entry point.
-
-First GPU approximation:
-assume `sRGB` input and a `BT.601`-like matrix in uniforms or shared shader code, without modeling a full camera pipeline.
-
-### 2. Luma / Chroma Decomposition
+### 1. InputDecode
 
 Purpose:
-separate detail-carrying luminance-like content from color-difference content so they can degrade differently.
+define the input transfer and matrix assumptions explicitly.
 
-Mathematical meaning:
-an operator `RGB -> {Y, C}` using a fixed matrix, with luma and chroma treated as separate branches after decomposition.
+Current v1 assumption:
+gamma-coded `sRGB` input interpreted with a BT.601-like luma/chroma matrix.
 
-Expected visual effect:
-enables sharper luma than chroma, color smearing, and luma/chroma mismatch typical of consumer analog playback.
-
-Physical plausibility:
-high. Different luma/chroma treatment is central to VHS-like behavior.
-
-First GPU approximation:
-convert sampled RGB into a YUV-like representation inside a pass, then process Y and C with different kernels or offsets.
-
-### 3. Luma Bandwidth Shaping
+### 2. ToneShaping
 
 Purpose:
-reduce fine detail, especially horizontally, while preserving overall image structure.
+introduce tone rolloff before spatial degradation so highlight compression is part of the signal path rather than a post-look flourish.
 
-Mathematical meaning:
-apply a luma low-pass operator `H_y`, optionally paired with broad pre-emphasis/de-emphasis.
+Current v1 shape:
+soft-knee highlight compression on luma, applied by rescaling RGB to preserve chromaticity.
 
-Expected visual effect:
-softened fine texture, reduced crispness, slight analog smear instead of pure Gaussian blur.
-
-Physical plausibility:
-high for the bandwidth loss, medium for the exact kernel used in v1.
-
-First GPU approximation:
-use a compact separable horizontal blur or weighted tap filter whose width is driven by `VhsLumaSettings.bandwidth_mhz`.
-
-### 4. Chroma Degradation
+### 3. RgbToLumaChroma
 
 Purpose:
-make color visibly less stable and lower-resolution than luma.
+split the signal into a luma branch and a chroma branch so each can degrade differently.
 
-Mathematical meaning:
-apply a lower-bandwidth chroma operator `H_c`, plus chroma delay `tau_c`, saturation scaling `g_c`, and phase perturbation `phi_c`.
+Current v1 shape:
+BT.601-like `YUV` working representation.
 
-Expected visual effect:
-color bleed, chroma lag, soft color edges, slight hue instability, and imperfect registration against luma.
-
-Physical plausibility:
-high for reduced chroma bandwidth and delay; medium for how phase error is approximated in still-image v1.
-
-First GPU approximation:
-sample chroma from offset coordinates, blur it more aggressively than luma, and optionally perturb chroma channels before reconstruction.
-
-### 5. Line-Wise Transport Instability
+### 4. LumaRecordPath
 
 Purpose:
-introduce spatial distortion that corresponds to tape transport / time-base instability without requiring video support.
+reduce horizontal detail and microcontrast while keeping image structure intact.
 
-Mathematical meaning:
-apply a line-dependent horizontal displacement field `dx_line(y)` and a small slow vertical displacement term `dy`.
+Current v1 shape:
+compact horizontal low-pass plus a very small pre/de-emphasis-inspired residual term.
 
-Expected visual effect:
-horizontal wiggle, scanline-level skew, and subtle frame instability that reads as analog transport error even on still images.
-
-Physical plausibility:
-medium to high. The phenomenon is real; the still-image version is a single-frame spatial snapshot of a temporal process.
-
-First GPU approximation:
-derive a per-line horizontal offset from deterministic functions or hashed line indices, then warp lookup coordinates before final sampling.
-
-### 6. Noise And Dropouts
+### 5. ChromaRecordPath
 
 Purpose:
-add stochastic corruption so the image no longer feels like a purely filtered digital frame.
+make chroma lower-fidelity and less well-registered than luma.
 
-Mathematical meaning:
-inject additive luma/chroma noise and optionally mask or attenuate short horizontal segments to mimic dropouts.
+Current v1 shape:
+chroma delay, chroma blur, chroma saturation scaling, and optional vertical chroma blend.
 
-Expected visual effect:
-fine grain, chroma roughness, low-level flicker impression, and occasional local signal collapse.
-
-Physical plausibility:
-high for the existence of noise and dropouts, medium for the chosen probability distributions in v1.
-
-First GPU approximation:
-use deterministic hash-based noise and simple horizontal dropout masks driven by line-local random values.
-
-### 7. Reconstruction
+### 6. TransportInstability
 
 Purpose:
-map the degraded signal representation back into an output image that downstream code can consume as a normal frame.
+project line-wise time-base instability into a still frame.
 
-Mathematical meaning:
-decode `{Y, C}` back into RGB with optional vertical chroma blending and residual luma/chroma crosstalk.
+Current v1 shape:
+deterministic horizontal line jitter and small vertical offset.
 
-Expected visual effect:
-recombined output with softened color, controlled leakage, and a coherent final analog-looking frame.
+### 7. NoiseAndDropouts
 
-Physical plausibility:
-medium. Recombination is required, but v1 uses a pragmatic decode stage rather than a fully modeled consumer decoder.
+Purpose:
+remove the “pure digital filter” feel by injecting stochastic corruption.
 
-First GPU approximation:
-recombine YUV-like values into RGB in the final fragment path and clamp to the working output format.
+Current v1 shape:
+additive luma/chroma noise. Dropout parameters exist in the formal model but are not yet implemented in the shader.
 
-## Mathematical Shape
+### 8. DecodeOutput
 
-At the operator level, v1 can be summarized as:
+Purpose:
+reconstruct a display-space RGB image from the degraded working signal.
 
-```text
-Y_out(x, y) = H_y{Y_in(x + dx_line(y), y + dy)} + n_y(x, y)
-C_out(x, y) = H_c{g_c * C_in(x + dx_line(y) - tau_c, y + dy)}
-              with additional phase error phi_c and chroma noise n_c
-RGB_out = D{Y_out, C_out, decode_settings}
-```
-
-Where:
-
-- `H_y` is the luma-loss operator
-- `H_c` is the chroma-loss operator
-- `dx_line` is line-wise horizontal instability
-- `dy` is slow vertical displacement
-- `tau_c` is chroma delay relative to luma
-- `phi_c` is chroma phase perturbation
-- `n_y` / `n_c` are stochastic noise terms
-- `D` is the reconstruction/decode operator
-
-The exact kernels, distributions, and pass decomposition are deliberately left open for the next implementation phase.
+Current v1 shape:
+`YUV -> RGB` reconstruction with a small Y/C leakage term.
 
 ## Domain Ownership
 
 ### What belongs in `casseted-signal`
 
-`casseted-signal` should own the signal contract:
+`casseted-signal` owns the signal contract:
 
 - `VhsModel`
-- `VhsSignalStage` / `VHS_SIGNAL_FLOW_V1`
-- the grouped parameter families for input, luma, chroma, transport, noise, and reconstruction
-- compact still-image prototype controls in `SignalSettings`
+- `VhsSignalStage` and `VHS_SIGNAL_FLOW_V1`
+- grouped parameter families for tone, input, luma, chroma, transport, noise, and decode
+- compact still-image controls in `SignalSettings` for the current preview path
 
 This is domain structure, not GPU structure.
 
 ### What belongs in `casseted-types`
 
-For v1, `casseted-types` should stay focused on generic frame data:
+`casseted-types` still owns only shared frame/image types:
 
-- frame size and descriptor metadata
-- pixel format
-- owned image buffers
+- `FrameSize`
+- `PixelFormat`
+- `FrameDescriptor`
+- `ImageFrame`
 
-No additional signal-specific enums need to move there yet. The current `FrameDescriptor`, `FrameSize`, `PixelFormat`, and `ImageFrame` remain sufficient because the new work is about signal semantics, not a new shared frame container API.
+No signal-specific types need to move there for v1.
 
-### What should stay out of public domain API for now
+### What stays out of the public signal API for now
 
-The following are implementation concerns and should remain in `casseted-pipeline` / WGSL rather than inflating `casseted-signal`:
+The following remain implementation details:
 
-- exact filter tap counts and kernel weights
-- pass fusion or pass splitting strategy
-- random hash functions and noise sampling details
+- exact filter taps and weights
 - uniform packing layout
-- temporary textures and intermediate buffer orchestration
-- cache/pipeline reuse policies
+- random hash details
+- temporary texture allocation
+- pass fusion or pass splitting
+- pipeline caching and resource reuse
 
 ## Parameter Groups In Code
 
-The formal domain model in `casseted-signal` is intentionally small:
+The current formal parameter groups are:
 
-- `VhsInputSettings`: transfer, matrix, temporal semantics
-- `VhsLumaSettings`: luma bandwidth/detail-shaping controls
-- `VhsChromaSettings`: chroma bandwidth, gain, delay, and phase
-- `VhsTransportSettings`: line-wise and frame-wise spatial instability
-- `VhsNoiseSettings`: luma/chroma noise and dropout behavior
-- `VhsDecodeSettings`: reconstruction softness and Y/C leakage
+- `VhsInputSettings`
+- `VhsToneSettings`
+- `VhsLumaSettings`
+- `VhsChromaSettings`
+- `VhsTransportSettings`
+- `VhsNoiseSettings`
+- `VhsDecodeSettings`
 
-This is enough to anchor future implementation without introducing presets, schemas, or a universal analog-signal abstraction.
+The compact still-preview layer in `SignalSettings` remains intentionally smaller:
 
-## Mapping To Future Pipeline Stages
+- `ToneSettings`
+- `LumaSettings`
+- `ChromaSettings`
+- `NoiseSettings`
+- `TrackingSettings`
 
-The future pipeline does not need to mirror the domain model one-to-one, but the mapping should stay legible:
+That preview layer is not a competing domain model. It is a narrow control surface for the current single-pass implementation.
 
-- `VhsInputSettings` -> shared conversion code / initial uniform assumptions
-- `VhsLumaSettings` -> luma blur or luma bandwidth-loss stage
-- `VhsChromaSettings` -> chroma offset / bleed / phase stage
-- `VhsTransportSettings` -> coordinate warp stage or integrated line-wise lookup distortion
-- `VhsNoiseSettings` -> noise/dropout stage or noise injection inside the final pass
-- `VhsDecodeSettings` -> final reconstruction step back to output RGB
+## Mapping To The Current Pipeline
 
-The current `SignalSettings`-driven still shader is a projection of only part of this model:
+The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the single-pass preview path:
 
-- `luma.blur_px` ~= coarse proxy for `VhsLumaSettings.bandwidth_mhz`
-- `chroma.offset_px` and `chroma.bleed_px` ~= coarse proxies for chroma delay and bandwidth loss
-- `noise.*` ~= subset of `VhsNoiseSettings`
-- `tracking.*` ~= subset of `VhsTransportSettings`
+- `StillImagePipeline::from_vhs_model()` creates the current still-preview configuration from a formal `VhsModel`
+- `prototype_signal_from_model()` converts the formal model into compact preview controls
+- `effect_uniforms()` resolves those controls into the WGSL uniform block used by `shaders/passes/still_analog.wgsl`
 
-## Explicitly Deferred
+Important constraint:
+this is a projection layer, not a graph engine and not a new runtime abstraction.
 
-The following work is intentionally not part of v1 formalization:
+Current implemented mapping:
 
-- full multi-pass GPU implementation of the entire model
-- video and frame-sequence support
-- preset systems and user-facing schemas
-- a full reference CPU engine
-- deck-accurate RF emulation
-- generalized pass graphs or runtime redesign
+- `VhsToneSettings` -> `SignalSettings.tone` -> `effect.tone_luma.xy`
+- `VhsLumaSettings.bandwidth_mhz` -> preview luma blur proxy -> `effect.tone_luma.z`
+- `VhsLumaSettings.preemphasis_db` -> small detail residual gain -> `effect.tone_luma.w`
+- `VhsChromaSettings.delay_us` -> preview chroma offset proxy -> `effect.chroma.x`
+- `VhsChromaSettings.bandwidth_khz` -> preview chroma blur proxy -> `effect.chroma.y`
+- `VhsChromaSettings.saturation_gain` -> `effect.chroma.z`
+- `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma.w`
+- `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.decode.y`
 
-## Implementation Consequence
+Secondary mappings that are still present but not the main focus of this phase:
 
-The next step should be a planning/projection layer that maps `VhsModel` into concrete still-image pipeline stages, while keeping the current runtime architecture intact.
+- `VhsTransportSettings.line_jitter_us` -> preview line jitter proxy
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> preview noise amplitudes
+
+## Implementation Status
+
+The current repository now implements a reference-consistent subset of v1 in one WGSL pass:
+
+- tone shaping
+- `RGB -> YUV` decomposition
+- luma low-pass/detail attenuation
+- chroma delay/blur/saturation degradation
+- reconstruction back to RGB
+- line jitter and additive noise as secondary terms
+
+Still deferred:
+
+- chroma phase error
+- dropouts
+- head switching behavior
+- temporal model
+- multi-pass separation of luma/chroma textures
+- video support
+
+## Consequence
+
+The next step is to extend this signal-model-aligned subset deliberately, not to replace the current architecture.
+
+The likely next implementation moves are:
+
+- separate or strengthen the chroma degradation path
+- add a more explicit transport/dropout stage
+- decide when single-pass fusion stops being clearer than limited multi-pass staging
+
+All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).
