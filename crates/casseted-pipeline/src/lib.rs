@@ -37,7 +37,7 @@ impl StillImagePipeline {
     pub fn from_vhs_model(model: VhsModel) -> Self {
         Self {
             model: Some(model),
-            signal: prototype_signal_from_model(model),
+            signal: project_vhs_model_to_preview_signal(model),
             shader_id: ShaderId::StillAnalog,
         }
     }
@@ -194,7 +194,7 @@ impl StillImagePipeline {
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("casseted-still-image-pass"),
+                label: Some("casseted-still-image-model-fused-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &output_view,
                     resolve_target: None,
@@ -293,7 +293,7 @@ impl fmt::Display for PipelineError {
 
 impl std::error::Error for PipelineError {}
 
-fn prototype_signal_from_model(model: VhsModel) -> SignalSettings {
+fn project_vhs_model_to_preview_signal(model: VhsModel) -> SignalSettings {
     SignalSettings {
         tone: ToneSettings {
             highlight_soft_knee: model.tone.highlight_soft_knee,
@@ -430,13 +430,99 @@ fn strip_padding(data: &[u8], width: u32, height: u32, padded_bytes_per_row: u32
     output
 }
 
+// The still-image path stays single-pass at runtime, but resolves its controls
+// through explicit logical stages before packing the WGSL uniform block.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ResolvedStillStages {
+    frame: FrameStage,
+    input_conditioning: InputConditioningStage,
+    luma_degradation: LumaDegradationStage,
+    chroma_degradation: ChromaDegradationStage,
+    reconstruction_output: ReconstructionOutputStage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FrameStage {
+    width: f32,
+    height: f32,
+    inv_width: f32,
+    inv_height: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct InputConditioningStage {
+    highlight_soft_knee: f32,
+    highlight_compression: f32,
+    line_jitter_px: f32,
+    vertical_offset_lines: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LumaDegradationStage {
+    blur_px: f32,
+    detail_mix: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ChromaDegradationStage {
+    offset_px: f32,
+    blur_px: f32,
+    saturation: f32,
+    vertical_blend: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReconstructionOutputStage {
+    luma_noise_amount: f32,
+    chroma_noise_amount: f32,
+    luma_chroma_crosstalk: f32,
+    frame_index: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct EffectUniforms {
     frame: [f32; 4],
-    tone_luma: [f32; 4],
-    chroma: [f32; 4],
-    transport: [f32; 4],
-    noise_decode: [f32; 4],
+    input_conditioning: [f32; 4],
+    luma_degradation: [f32; 4],
+    chroma_degradation: [f32; 4],
+    reconstruction_output: [f32; 4],
+}
+
+impl From<ResolvedStillStages> for EffectUniforms {
+    fn from(stages: ResolvedStillStages) -> Self {
+        Self {
+            frame: [
+                stages.frame.width,
+                stages.frame.height,
+                stages.frame.inv_width,
+                stages.frame.inv_height,
+            ],
+            input_conditioning: [
+                stages.input_conditioning.highlight_soft_knee,
+                stages.input_conditioning.highlight_compression,
+                stages.input_conditioning.line_jitter_px,
+                stages.input_conditioning.vertical_offset_lines,
+            ],
+            luma_degradation: [
+                stages.luma_degradation.blur_px,
+                stages.luma_degradation.detail_mix,
+                0.0,
+                0.0,
+            ],
+            chroma_degradation: [
+                stages.chroma_degradation.offset_px,
+                stages.chroma_degradation.blur_px,
+                stages.chroma_degradation.saturation,
+                stages.chroma_degradation.vertical_blend,
+            ],
+            reconstruction_output: [
+                stages.reconstruction_output.luma_noise_amount,
+                stages.reconstruction_output.chroma_noise_amount,
+                stages.reconstruction_output.luma_chroma_crosstalk,
+                stages.reconstruction_output.frame_index,
+            ],
+        }
+    }
 }
 
 impl EffectUniforms {
@@ -446,22 +532,22 @@ impl EffectUniforms {
             self.frame[1],
             self.frame[2],
             self.frame[3],
-            self.tone_luma[0],
-            self.tone_luma[1],
-            self.tone_luma[2],
-            self.tone_luma[3],
-            self.chroma[0],
-            self.chroma[1],
-            self.chroma[2],
-            self.chroma[3],
-            self.transport[0],
-            self.transport[1],
-            self.transport[2],
-            self.transport[3],
-            self.noise_decode[0],
-            self.noise_decode[1],
-            self.noise_decode[2],
-            self.noise_decode[3],
+            self.input_conditioning[0],
+            self.input_conditioning[1],
+            self.input_conditioning[2],
+            self.input_conditioning[3],
+            self.luma_degradation[0],
+            self.luma_degradation[1],
+            self.luma_degradation[2],
+            self.luma_degradation[3],
+            self.chroma_degradation[0],
+            self.chroma_degradation[1],
+            self.chroma_degradation[2],
+            self.chroma_degradation[3],
+            self.reconstruction_output[0],
+            self.reconstruction_output[1],
+            self.reconstruction_output[2],
+            self.reconstruction_output[3],
         ];
 
         let mut bytes = [0_u8; EFFECT_UNIFORM_FLOATS * 4];
@@ -474,54 +560,96 @@ impl EffectUniforms {
     }
 }
 
+fn resolve_still_stages(
+    input: &ImageFrame,
+    signal: SignalSettings,
+    model: Option<VhsModel>,
+) -> ResolvedStillStages {
+    let width = input.descriptor.size.width as f32;
+    let height = input.descriptor.size.height as f32;
+    let reference_scale = (width / REFERENCE_WIDTH_PX).max(0.0);
+
+    ResolvedStillStages {
+        frame: FrameStage {
+            width,
+            height,
+            inv_width: width.recip(),
+            inv_height: height.recip(),
+        },
+        input_conditioning: resolve_input_conditioning_stage(signal, reference_scale),
+        luma_degradation: resolve_luma_degradation_stage(signal, reference_scale, model),
+        chroma_degradation: resolve_chroma_degradation_stage(signal, reference_scale, model),
+        reconstruction_output: resolve_reconstruction_output_stage(input, signal, model),
+    }
+}
+
+fn resolve_input_conditioning_stage(
+    signal: SignalSettings,
+    reference_scale: f32,
+) -> InputConditioningStage {
+    InputConditioningStage {
+        highlight_soft_knee: signal.tone.highlight_soft_knee.clamp(0.0, 0.999),
+        highlight_compression: signal.tone.highlight_compression.max(0.0),
+        line_jitter_px: signal.tracking.line_jitter_px * reference_scale,
+        vertical_offset_lines: signal.tracking.vertical_offset_lines,
+    }
+}
+
+fn resolve_luma_degradation_stage(
+    signal: SignalSettings,
+    reference_scale: f32,
+    model: Option<VhsModel>,
+) -> LumaDegradationStage {
+    let detail_mix = model
+        .map(|vhs| detail_mix_from_preemphasis(vhs.luma.preemphasis_db))
+        .unwrap_or(0.0);
+
+    LumaDegradationStage {
+        blur_px: signal.luma.blur_px.max(0.0) * reference_scale,
+        detail_mix,
+    }
+}
+
+fn resolve_chroma_degradation_stage(
+    signal: SignalSettings,
+    reference_scale: f32,
+    model: Option<VhsModel>,
+) -> ChromaDegradationStage {
+    let vertical_blend = model
+        .map(|vhs| vhs.decode.chroma_vertical_blend.clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+
+    ChromaDegradationStage {
+        offset_px: signal.chroma.offset_px * reference_scale,
+        blur_px: signal.chroma.bleed_px.max(0.0) * reference_scale,
+        saturation: signal.chroma.saturation.max(0.0),
+        vertical_blend,
+    }
+}
+
+fn resolve_reconstruction_output_stage(
+    input: &ImageFrame,
+    signal: SignalSettings,
+    model: Option<VhsModel>,
+) -> ReconstructionOutputStage {
+    let luma_chroma_crosstalk = model
+        .map(|vhs| vhs.decode.luma_chroma_crosstalk.clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+
+    ReconstructionOutputStage {
+        luma_noise_amount: signal.noise.luma_amount.max(0.0),
+        chroma_noise_amount: signal.noise.chroma_amount.max(0.0),
+        luma_chroma_crosstalk,
+        frame_index: input.descriptor.frame_index as f32,
+    }
+}
+
 fn effect_uniforms(
     input: &ImageFrame,
     signal: SignalSettings,
     model: Option<VhsModel>,
 ) -> EffectUniforms {
-    let width = input.descriptor.size.width as f32;
-    let height = input.descriptor.size.height as f32;
-    let frame_index = input.descriptor.frame_index as f32;
-    let reference_scale = (width / REFERENCE_WIDTH_PX).max(0.0);
-    // `StillImagePipeline::new(signal)` uses the narrower manual preview path,
-    // so model-only terms stay neutral when no formal model is attached.
-    let detail_mix = model
-        .map(|vhs| detail_mix_from_preemphasis(vhs.luma.preemphasis_db))
-        .unwrap_or(0.0);
-    let chroma_vertical_blend = model
-        .map(|vhs| vhs.decode.chroma_vertical_blend.clamp(0.0, 1.0))
-        .unwrap_or(0.0);
-    let luma_chroma_crosstalk = model
-        .map(|vhs| vhs.decode.luma_chroma_crosstalk.clamp(0.0, 1.0))
-        .unwrap_or(0.0);
-
-    EffectUniforms {
-        frame: [width, height, width.recip(), height.recip()],
-        tone_luma: [
-            signal.tone.highlight_soft_knee.clamp(0.0, 0.999),
-            signal.tone.highlight_compression.max(0.0),
-            signal.luma.blur_px.max(0.0) * reference_scale,
-            detail_mix,
-        ],
-        chroma: [
-            signal.chroma.offset_px * reference_scale,
-            signal.chroma.bleed_px.max(0.0) * reference_scale,
-            signal.chroma.saturation.max(0.0),
-            chroma_vertical_blend,
-        ],
-        transport: [
-            signal.tracking.line_jitter_px * reference_scale,
-            signal.tracking.vertical_offset_lines,
-            frame_index,
-            0.0,
-        ],
-        noise_decode: [
-            signal.noise.luma_amount.max(0.0),
-            signal.noise.chroma_amount.max(0.0),
-            luma_chroma_crosstalk,
-            0.0,
-        ],
-    }
+    resolve_still_stages(input, signal, model).into()
 }
 
 fn effect_uniform_bytes(
@@ -534,7 +662,10 @@ fn effect_uniform_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{StillImagePipeline, effect_uniform_bytes, effect_uniforms, padded_bytes_per_row};
+    use super::{
+        StillImagePipeline, effect_uniform_bytes, effect_uniforms, padded_bytes_per_row,
+        resolve_still_stages,
+    };
     use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
     use casseted_signal::{SignalSettings, VhsModel};
     use casseted_testing::{assert_images_not_identical, gradient_rgba8_image};
@@ -578,11 +709,23 @@ mod tests {
     #[test]
     fn manual_pipeline_keeps_model_dependent_decode_terms_neutral() {
         let input = gradient_rgba8_image(FrameSize::new(720, 480));
-        let uniforms = effect_uniforms(&input, SignalSettings::default(), None);
+        let stages = resolve_still_stages(&input, SignalSettings::default(), None);
 
-        assert_eq!(uniforms.tone_luma[3], 0.0);
-        assert_eq!(uniforms.chroma[3], 0.0);
-        assert_eq!(uniforms.noise_decode[2], 0.0);
+        assert_eq!(stages.luma_degradation.detail_mix, 0.0);
+        assert_eq!(stages.chroma_degradation.vertical_blend, 0.0);
+        assert_eq!(stages.reconstruction_output.luma_chroma_crosstalk, 0.0);
+    }
+
+    #[test]
+    fn effect_uniforms_are_grouped_by_logical_stage() {
+        let input = gradient_rgba8_image(FrameSize::new(720, 480));
+        let pipeline = StillImagePipeline::default();
+        let uniforms = effect_uniforms(&input, pipeline.signal, pipeline.model);
+
+        assert!((uniforms.input_conditioning[0] - 0.72).abs() < 1e-6);
+        assert!((uniforms.luma_degradation[1] - 0.075).abs() < 1e-6);
+        assert!((uniforms.chroma_degradation[3] - 0.25).abs() < 1e-6);
+        assert!((uniforms.reconstruction_output[2] - 0.05).abs() < 1e-6);
     }
 
     #[test]

@@ -4,11 +4,11 @@ This document is the engineering reference for the subset of signal-model v1 tha
 
 It is intentionally narrower than a full VHS deck model. The goal is to define the exact discrete approximations that the repository currently uses for:
 
-- tone shaping with soft highlight compression
+- input conditioning and tone shaping
 - BT.601-like luma/chroma working decomposition
 - luma-oriented horizontal bandwidth loss
 - one controllable chroma degradation path
-- reconstruction back to RGB
+- reconstruction back to RGB with the currently integrated noise subset
 
 The current GPU implementation lives in:
 
@@ -19,19 +19,27 @@ The current GPU implementation lives in:
 
 The implemented still-image subset is:
 
-1. input interpretation: gamma-coded `sRGB` input, BT.601-like working coefficients
-2. tone shaping: luma-preserving soft-knee highlight compression
-3. `RGB -> YUV` decomposition
-4. luma low-pass/detail attenuation
-5. chroma horizontal delay + chroma blur + optional vertical chroma blend
-6. `YUV -> RGB` reconstruction with a small Y/C leakage term
+1. input conditioning / tone shaping: gamma-coded `sRGB` input assumptions, still-frame transport offset, and luma-preserving soft-knee highlight compression
+2. `RGB -> YUV` decomposition
+3. luma low-pass/detail attenuation
+4. chroma horizontal delay + chroma blur + optional vertical chroma blend
+5. `YUV -> RGB` reconstruction with a small Y/C leakage term and additive luma/chroma noise
 
-Secondary prototype terms that are still present in the current shader:
+The current implementation keeps those stages in one render pass, but names them explicitly in code through:
 
-- deterministic per-line horizontal jitter
-- additive luma/chroma noise
+- `resolve_still_stages()` in `casseted-pipeline`
+- stage-aligned uniform groups in `EffectUniforms`
+- stage helper functions in `still_analog.wgsl`
 
-These secondary terms are documented here because they are implemented, but they are not the main normative focus of this stage.
+### Current Implementation Stage Layout
+
+| Implementation stage | Formal v1 stage coverage | Current code / shader entry points | Current pass boundary |
+| --- | --- | --- | --- |
+| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, spatial still-frame subset of `TransportInstability` | `resolve_input_conditioning_stage()`, `apply_input_conditioning()`, `apply_tone_shaping()` | fused into `still_analog.wgsl` |
+| Luma/chroma transform | `RgbToLumaChroma` | `sample_working_signal()` | fused into `still_analog.wgsl` |
+| Luma degradation | `LumaRecordPath` | `resolve_luma_degradation_stage()`, `degrade_luma()` | fused into `still_analog.wgsl` |
+| Chroma degradation | `ChromaRecordPath` | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | fused into `still_analog.wgsl` |
+| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | fused into `still_analog.wgsl` |
 
 ## 2. Notation And Variables
 
@@ -104,7 +112,7 @@ Engineering approximation:
 `sRGB` input is accepted directly and converted to a BT.601-like working representation in shader code.
 
 Pipeline mapping:
-fused into `sample_working_yuv()` inside `shaders/passes/still_analog.wgsl`.
+fused into `sample_working_signal()` inside `shaders/passes/still_analog.wgsl`.
 
 ### Working representation
 
@@ -126,10 +134,10 @@ Why this representation is used in v1:
 
 ## 4. Implemented Stages
 
-### 4.1 Tone Shaping / Soft Highlight Compression
+### 4.1 Input Conditioning / Tone Shaping
 
 Purpose:
-compress high-luma regions before luma/chroma degradation so highlights roll off instead of clipping abruptly.
+condition the still-frame sample location and compress high-luma regions before luma/chroma degradation so highlights roll off instead of clipping abruptly.
 
 Mathematical meaning:
 apply a soft-knee compression to luma, then rescale RGB by the luma ratio to preserve chromaticity.
@@ -175,7 +183,8 @@ Pipeline / shader mapping:
 
 - domain parameter group: `VhsToneSettings`
 - current still controls: `SignalSettings.tone`
-- shader implementation: `soft_highlight_knee()` and `apply_tone_curve()`
+- stage-aligned uniform group: `effect.input_conditioning.xy`
+- shader implementation: `apply_input_conditioning()`, `soft_highlight_knee()`, and `apply_tone_shaping()`
 
 ### 4.2 Luma / Chroma Decomposition
 
@@ -197,7 +206,7 @@ the working representation is BT.601-like rather than a deck-accurate encode/dec
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::RgbToLumaChroma`
-- shader implementation: `rgb_to_yuv()` inside `sample_working_yuv()`
+- shader implementation: `rgb_to_yuv()` inside `sample_working_signal()`
 
 ### 4.3 Luma Bandwidth Limitation
 
@@ -266,7 +275,7 @@ Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::LumaRecordPath`
 - pipeline projection: `luma_blur_from_bandwidth()`
-- uniform mapping: `effect.tone_luma.z` and `effect.tone_luma.w`
+- uniform mapping: `effect.luma_degradation.x` and `effect.luma_degradation.y`
 
 ### 4.4 Chroma Degradation
 
@@ -338,13 +347,14 @@ current still-image v1 uses one delayed, blurred chroma path instead of a full e
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::ChromaRecordPath`
-- pipeline projection: `prototype_signal_from_model()` and `chroma_bleed_from_bandwidth()`
-- shader implementation: `chroma_horizontal`, `chroma_vertical`, `chroma`
+- pipeline projection: `project_vhs_model_to_preview_signal()` and `chroma_bleed_from_bandwidth()`
+- uniform mapping: `effect.chroma_degradation`
+- shader implementation: `degrade_chroma()`
 
 ### 4.5 Reconstruction To Output RGB
 
 Purpose:
-recombine degraded luma and chroma into a display RGB image.
+recombine degraded luma and chroma into a display RGB image and inject the currently implemented noise subset near output reconstruction.
 
 Mathematical meaning:
 add a small Y/C leakage term to luma, add chroma noise, then invert the working matrix.
@@ -379,8 +389,8 @@ the still pass reconstructs directly to clamped RGB in the final fragment stage.
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::DecodeOutput`
-- uniform mapping: `effect.noise_decode.z`
-- shader implementation: `reconstructed_y`, `reconstructed_chroma`, `yuv_to_rgb()`
+- uniform mapping: `effect.reconstruction_output`
+- shader implementation: `sample_output_noise()`, `reconstruct_output()`, `yuv_to_rgb()`
 
 ## 5. Secondary Integrated Terms
 
@@ -412,8 +422,8 @@ Mapping:
 
 - formal source: `VhsTransportSettings.line_jitter_us`
 - formal source for \(\delta_V\): `VhsTransportSettings.vertical_wander_lines`
-- pipeline projection: `prototype_signal_from_model()` converts \(\mu s \to\) reference pixels
-- shader uniforms: `effect.transport.x`, `effect.transport.y`, `effect.transport.z`
+- pipeline projection: `project_vhs_model_to_preview_signal()` converts \(\mu s \to\) reference pixels
+- shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.reconstruction_output.w`
 
 ### 5.2 Additive Noise
 
@@ -430,8 +440,8 @@ where \(h_Y, h_C \in [0, 1]\) are hash-derived pseudo-random samples.
 Mapping:
 
 - formal source: `VhsNoiseSettings.luma_sigma`, `VhsNoiseSettings.chroma_sigma`
-- pipeline projection: `prototype_signal_from_model()`
-- shader uniforms: `effect.noise_decode.x`, `effect.noise_decode.y`
+- pipeline projection: `project_vhs_model_to_preview_signal()`
+- shader uniforms: `effect.reconstruction_output.x`, `effect.reconstruction_output.y`
 
 ## 6. Mapping To Code
 
@@ -453,14 +463,14 @@ Mapping:
 
 | Formal stage | Current pipeline representation | Current WGSL location |
 | --- | --- | --- |
-| `InputDecode` | implicit working assumptions in `effect_uniforms()` and `sample_working_yuv()` | `sample_working_yuv()` |
-| `ToneShaping` | `SignalSettings.tone` + `effect.tone_luma.xy` | `soft_highlight_knee()`, `apply_tone_curve()` |
-| `RgbToLumaChroma` | fused working decomposition | `rgb_to_yuv()` |
-| `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain | `blurred_luma`, `edge_band`, `luma` |
-| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `chroma_horizontal`, `chroma_vertical`, `chroma` |
-| `TransportInstability` | `SignalSettings.tracking.*`; fused ahead of both luma and chroma sampling | `line_jitter`, `base_uv` |
-| `NoiseAndDropouts` | noise-only subset of the stage via `SignalSettings.noise.*` | `luma_noise`, `chroma_noise` |
-| `DecodeOutput` | projected crosstalk + inverse matrix | `reconstructed_y`, `reconstructed_chroma`, `yuv_to_rgb()` |
+| `InputDecode` | implicit working assumptions in `resolve_still_stages()` and `sample_working_signal()` | `sample_working_signal()` |
+| `ToneShaping` | `SignalSettings.tone` + `effect.input_conditioning.xy` | `soft_highlight_knee()`, `apply_tone_shaping()` |
+| `RgbToLumaChroma` | fused working decomposition | `rgb_to_yuv()` inside `sample_working_signal()` |
+| `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain | `degrade_luma()` |
+| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
+| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning stage ahead of both luma and chroma sampling | `apply_input_conditioning()` |
+| `NoiseAndDropouts` | noise-only subset of the stage via `SignalSettings.noise.*` | `sample_output_noise()` |
+| `DecodeOutput` | projected crosstalk + inverse matrix | `reconstruct_output()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
 
@@ -517,7 +527,7 @@ where:
 
 These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
 
-- `prototype_signal_from_model()`
+- `project_vhs_model_to_preview_signal()`
 - `line_jitter_px_from_timebase()`
 - `luma_blur_from_bandwidth()`
 - `chroma_bleed_from_bandwidth()`

@@ -1,4 +1,11 @@
 //! Compact prototype settings used by the current still-image shader pipeline.
+//!
+//! The grouping stays intentionally small and preview-oriented, but it now maps
+//! more explicitly onto the implementation stages used by the fused still pass:
+//! - `tone` + `tracking`: input conditioning / tone shaping
+//! - `luma`: luma degradation
+//! - `chroma`: chroma degradation
+//! - `noise`: reconstruction / output noise injection
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignalSettings {
