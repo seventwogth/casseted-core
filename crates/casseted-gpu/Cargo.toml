@@ -6,8 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-casseted-shaderlib.workspace = true
-casseted-types.workspace = true
 wgpu.workspace = true
 
 [lib]

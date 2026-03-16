@@ -124,7 +124,8 @@ impl StillImagePipeline {
                 ],
             });
 
-        let shader = context.create_shader_module(shader_source(self.shader_id));
+        let shader = shader_source(self.shader_id);
+        let shader = context.create_shader_module(Some(shader.label), shader.source);
         let pipeline_layout =
             context
                 .device

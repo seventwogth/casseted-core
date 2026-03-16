@@ -1,6 +1,5 @@
 //! Minimal `wgpu` foundation used by the core workspace.
 
-use casseted_shaderlib::ShaderSource;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -67,7 +66,6 @@ pub struct GpuContext {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub adapter_info: wgpu::AdapterInfo,
 }
 
 impl GpuContext {
@@ -81,7 +79,6 @@ impl GpuContext {
             .request_adapter(&descriptor.adapter_options())
             .await
             .ok_or(GpuInitError::AdapterNotFound)?;
-        let adapter_info = adapter.get_info();
         let (device, queue) = adapter
             .request_device(&descriptor.device_descriptor(), None)
             .await
@@ -92,20 +89,10 @@ impl GpuContext {
             adapter,
             device,
             queue,
-            adapter_info,
         })
     }
 
-    pub fn create_shader_module(&self, shader: ShaderSource) -> wgpu::ShaderModule {
-        self.device
-            .create_shader_module(shader_module_descriptor(Some(shader.label), shader.source))
-    }
-
-    pub fn create_shader_module_from_wgsl(
-        &self,
-        label: Option<&str>,
-        source: &str,
-    ) -> wgpu::ShaderModule {
+    pub fn create_shader_module(&self, label: Option<&str>, source: &str) -> wgpu::ShaderModule {
         self.device
             .create_shader_module(shader_module_descriptor(label, source))
     }
@@ -124,7 +111,6 @@ pub fn shader_module_descriptor<'a>(
 #[cfg(test)]
 mod tests {
     use super::{GpuContextDescriptor, shader_module_descriptor};
-    use casseted_shaderlib::{ShaderId, shader_source};
 
     #[test]
     fn gpu_context_descriptor_defaults_are_headless_friendly() {
@@ -137,14 +123,16 @@ mod tests {
 
     #[test]
     fn shader_module_descriptor_wraps_wgsl_source() {
-        let shader = shader_source(ShaderId::StillAnalog);
-        let descriptor = shader_module_descriptor(Some(shader.label), shader.source);
+        let descriptor = shader_module_descriptor(
+            Some("inline_test"),
+            "@vertex fn vs_main() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+        );
 
-        assert_eq!(descriptor.label, Some("still_analog"));
+        assert_eq!(descriptor.label, Some("inline_test"));
         match descriptor.source {
             wgpu::ShaderSource::Wgsl(source) => {
                 assert!(source.contains("@vertex"));
-                assert!(source.contains("fs_main"));
+                assert!(source.contains("vs_main"));
             }
             _ => panic!("expected WGSL shader source"),
         }

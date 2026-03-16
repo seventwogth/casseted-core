@@ -12,7 +12,7 @@ Current data flow:
 - CLI code reads a PNG image into an `ImageFrame`
 - pipeline code chooses a built-in shader identifier and builds a small uniform block from `SignalSettings`
 - shaderlib resolves it to WGSL source embedded from `shaders/passes/`
-- gpu code creates a `wgpu::ShaderModule` from that WGSL and executes a fullscreen pass
+- gpu code compiles raw WGSL provided by the pipeline and executes a fullscreen pass
 - the processed texture is copied back to CPU memory as an `ImageFrame`
 - CLI code writes the processed image back to disk as PNG
 

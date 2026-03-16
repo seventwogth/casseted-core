@@ -106,15 +106,6 @@ impl ImageFrame {
         Self::new(FrameDescriptor::new(size, PixelFormat::Rgba8Unorm, 0), data)
     }
 
-    pub fn solid_rgba8(size: FrameSize, rgba: [u8; 4]) -> Self {
-        let mut data = Vec::with_capacity(size.pixels() as usize * 4);
-        for _ in 0..size.pixels() {
-            data.extend_from_slice(&rgba);
-        }
-
-        Self::rgba8(size, data).expect("solid RGBA image generation must be valid")
-    }
-
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
     }
@@ -163,7 +154,21 @@ mod tests {
 
     #[test]
     fn solid_rgba8_produces_expected_number_of_bytes() {
-        let image = ImageFrame::solid_rgba8(FrameSize::new(3, 2), [10, 20, 30, 255]);
+        let image = ImageFrame::rgba8(
+            FrameSize::new(3, 2),
+            [
+                [10, 20, 30, 255],
+                [10, 20, 30, 255],
+                [10, 20, 30, 255],
+                [10, 20, 30, 255],
+                [10, 20, 30, 255],
+                [10, 20, 30, 255],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        )
+        .expect("raw RGBA bytes should build a valid image");
 
         assert_eq!(image.data.len(), 3 * 2 * 4);
         assert_eq!(&image.data[0..4], &[10, 20, 30, 255]);

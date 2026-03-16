@@ -24,6 +24,12 @@ At this stage the project does not implement video support, a multi-pass render 
 - `casseted-cli`: local PNG-to-PNG CLI utility for developer-facing pipeline checks
 - `casseted-testing`: shared helpers for test images, image diffs, and basic assertions
 
+The main layer boundary is intentionally simple:
+
+- `casseted-shaderlib` owns repository shader assets
+- `casseted-gpu` owns low-level runtime setup
+- `casseted-pipeline` is the layer that bridges the two for real processing
+
 ## Repository layout
 
 ```text

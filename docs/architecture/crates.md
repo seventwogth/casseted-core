@@ -7,8 +7,9 @@
 - frame/image size
 - pixel format
 - frame descriptor metadata
+- owned image buffers
 
-This crate should stay free of GPU runtime concerns so it can be used by pipeline planning, testing, CPU-side orchestration, and future serialization work.
+This crate should stay free of GPU runtime concerns and avoid collecting test-only conveniences, so it can be used by pipeline planning, CPU-side orchestration, and future serialization work.
 
 ## `casseted-signal`
 
@@ -31,9 +32,9 @@ The goal is not to describe every VHS characteristic upfront. The crate only pro
 
 - headless `Instance` / `Adapter` / `Device` / `Queue` initialization
 - a compact GPU context descriptor
-- helper functions for building shader modules from WGSL
+- helper functions for building shader modules from raw WGSL
 
-This crate should stay focused on runtime setup and low-level GPU utilities so the first pipeline can build on top of it without mixing in signal-domain logic.
+This crate stays intentionally ignorant of repository shader identifiers. `casseted-pipeline` is the layer that bridges `casseted-shaderlib` assets to GPU execution.
 
 ## `casseted-pipeline`
 
