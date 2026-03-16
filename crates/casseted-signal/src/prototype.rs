@@ -37,7 +37,11 @@ impl Default for SignalSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ToneSettings {
+    /// Normalized luma level where soft-knee highlight compression begins.
+    /// `1.0` disables the tone stage in the preview path.
     pub highlight_soft_knee: f32,
+    /// Compression strength applied above the soft-knee threshold.
+    /// `0.0` disables highlight compression.
     pub highlight_compression: f32,
 }
 
@@ -56,6 +60,7 @@ impl ToneSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LumaSettings {
+    /// Horizontal luma blur radius proxy in reference-width pixels.
     pub blur_px: f32,
 }
 
@@ -71,8 +76,11 @@ impl LumaSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChromaSettings {
+    /// Horizontal chroma delay proxy in reference-width pixels.
     pub offset_px: f32,
+    /// Legacy preview control name for the chroma blur radius proxy.
     pub bleed_px: f32,
+    /// Post-blur chroma gain. `1.0` keeps chroma magnitude neutral.
     pub saturation: f32,
 }
 
@@ -92,7 +100,9 @@ impl ChromaSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NoiseSettings {
+    /// Preview luma-noise amplitude after formal sigma projection.
     pub luma_amount: f32,
+    /// Preview chroma-noise amplitude after formal sigma projection.
     pub chroma_amount: f32,
 }
 
@@ -111,7 +121,9 @@ impl NoiseSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackingSettings {
+    /// Horizontal line-jitter amplitude in reference-width pixels.
     pub line_jitter_px: f32,
+    /// Still-frame vertical offset snapshot expressed in scan lines.
     pub vertical_offset_lines: f32,
 }
 

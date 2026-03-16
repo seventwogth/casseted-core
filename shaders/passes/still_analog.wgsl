@@ -2,8 +2,8 @@ struct EffectUniform {
     frame: vec4<f32>,
     tone_luma: vec4<f32>,
     chroma: vec4<f32>,
-    noise_tracking: vec4<f32>,
-    decode: vec4<f32>,
+    transport: vec4<f32>,
+    noise_decode: vec4<f32>,
 };
 
 struct VsOutput {
@@ -89,10 +89,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
 fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
     let frame_size = effect.frame.xy;
     let inv_size = effect.frame.zw;
-    let line_index = floor(in.uv.y * frame_size.y + effect.noise_tracking.z);
-    let line_phase = line_index + effect.noise_tracking.w * 0.5;
-    let line_jitter = sin(line_phase * 0.37) * effect.decode.x * inv_size.x;
-    let base_uv = vec2<f32>(in.uv.x + line_jitter, in.uv.y + effect.noise_tracking.z * inv_size.y);
+    let line_index = floor(in.uv.y * frame_size.y + effect.transport.y);
+    let line_phase = line_index + effect.transport.z * 0.5;
+    let line_jitter = sin(line_phase * 0.37) * effect.transport.x * inv_size.x;
+    let base_uv = vec2<f32>(in.uv.x + line_jitter, in.uv.y + effect.transport.y * inv_size.y);
 
     let center = sample_working_yuv(base_uv);
     let luma_offset = effect.tone_luma.z * inv_size.x;
@@ -122,13 +122,13 @@ fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
     let chroma = mix(chroma_horizontal, chroma_vertical, effect.chroma.w) * effect.chroma.z;
 
     let noise_coord = vec2<f32>(floor(base_uv.x * frame_size.x), floor(base_uv.y * frame_size.y));
-    let luma_noise = (hash12(noise_coord + vec2<f32>(effect.noise_tracking.w, 3.0)) - 0.5)
-        * effect.noise_tracking.x;
-    let chroma_noise = (hash12(noise_coord.yx + vec2<f32>(5.0, effect.noise_tracking.w)) - 0.5)
-        * effect.noise_tracking.y;
+    let luma_noise = (hash12(noise_coord + vec2<f32>(effect.transport.z, 3.0)) - 0.5)
+        * effect.noise_decode.x;
+    let chroma_noise = (hash12(noise_coord.yx + vec2<f32>(5.0, effect.transport.z)) - 0.5)
+        * effect.noise_decode.y;
 
     let reconstructed_y = clamp(
-        luma + dot(chroma, vec2<f32>(0.10, -0.05)) * effect.decode.y + luma_noise,
+        luma + dot(chroma, vec2<f32>(0.10, -0.05)) * effect.noise_decode.z + luma_noise,
         0.0,
         1.0,
     );

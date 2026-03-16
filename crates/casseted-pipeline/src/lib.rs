@@ -308,17 +308,18 @@ fn prototype_signal_from_model(model: VhsModel) -> SignalSettings {
             saturation: model.chroma.saturation_gain.max(0.0),
         },
         noise: NoiseSettings {
-            luma_amount: (model.noise.luma_sigma.max(0.0) * 1.25).min(1.0),
-            chroma_amount: (model.noise.chroma_sigma.max(0.0) * 0.5).min(1.0),
+            luma_amount: luma_noise_amount_from_sigma(model.noise.luma_sigma),
+            chroma_amount: chroma_noise_amount_from_sigma(model.noise.chroma_sigma),
         },
         tracking: TrackingSettings {
-            line_jitter_px: (model.transport.line_jitter_us.max(0.0)
-                * BT601_SAMPLES_PER_US
-                * STILL_JITTER_ATTENUATION)
-                .max(0.0),
+            line_jitter_px: line_jitter_px_from_timebase(model.transport.line_jitter_us),
             vertical_offset_lines: model.transport.vertical_wander_lines,
         },
     }
+}
+
+fn line_jitter_px_from_timebase(line_jitter_us: f32) -> f32 {
+    (line_jitter_us.max(0.0) * BT601_SAMPLES_PER_US * STILL_JITTER_ATTENUATION).max(0.0)
 }
 
 fn luma_blur_from_bandwidth(bandwidth_mhz: f32) -> f32 {
@@ -327,6 +328,18 @@ fn luma_blur_from_bandwidth(bandwidth_mhz: f32) -> f32 {
 
 fn chroma_bleed_from_bandwidth(bandwidth_khz: f32) -> f32 {
     (((REFERENCE_CHROMA_BANDWIDTH_KHZ - bandwidth_khz).max(0.0)) / 400.0).min(4.0)
+}
+
+fn luma_noise_amount_from_sigma(luma_sigma: f32) -> f32 {
+    (luma_sigma.max(0.0) * 1.25).min(1.0)
+}
+
+fn chroma_noise_amount_from_sigma(chroma_sigma: f32) -> f32 {
+    (chroma_sigma.max(0.0) * 0.5).min(1.0)
+}
+
+fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
+    (preemphasis_db.max(0.0) * 0.025).min(0.20)
 }
 
 fn validate_input_image(input: &ImageFrame) -> Result<(), PipelineError> {
@@ -422,8 +435,8 @@ struct EffectUniforms {
     frame: [f32; 4],
     tone_luma: [f32; 4],
     chroma: [f32; 4],
-    noise_tracking: [f32; 4],
-    decode: [f32; 4],
+    transport: [f32; 4],
+    noise_decode: [f32; 4],
 }
 
 impl EffectUniforms {
@@ -441,14 +454,14 @@ impl EffectUniforms {
             self.chroma[1],
             self.chroma[2],
             self.chroma[3],
-            self.noise_tracking[0],
-            self.noise_tracking[1],
-            self.noise_tracking[2],
-            self.noise_tracking[3],
-            self.decode[0],
-            self.decode[1],
-            self.decode[2],
-            self.decode[3],
+            self.transport[0],
+            self.transport[1],
+            self.transport[2],
+            self.transport[3],
+            self.noise_decode[0],
+            self.noise_decode[1],
+            self.noise_decode[2],
+            self.noise_decode[3],
         ];
 
         let mut bytes = [0_u8; EFFECT_UNIFORM_FLOATS * 4];
@@ -470,8 +483,10 @@ fn effect_uniforms(
     let height = input.descriptor.size.height as f32;
     let frame_index = input.descriptor.frame_index as f32;
     let reference_scale = (width / REFERENCE_WIDTH_PX).max(0.0);
+    // `StillImagePipeline::new(signal)` uses the narrower manual preview path,
+    // so model-only terms stay neutral when no formal model is attached.
     let detail_mix = model
-        .map(|vhs| (vhs.luma.preemphasis_db.max(0.0) * 0.025).min(0.20))
+        .map(|vhs| detail_mix_from_preemphasis(vhs.luma.preemphasis_db))
         .unwrap_or(0.0);
     let chroma_vertical_blend = model
         .map(|vhs| vhs.decode.chroma_vertical_blend.clamp(0.0, 1.0))
@@ -494,16 +509,16 @@ fn effect_uniforms(
             signal.chroma.saturation.max(0.0),
             chroma_vertical_blend,
         ],
-        noise_tracking: [
-            signal.noise.luma_amount.max(0.0),
-            signal.noise.chroma_amount.max(0.0),
+        transport: [
+            signal.tracking.line_jitter_px * reference_scale,
             signal.tracking.vertical_offset_lines,
             frame_index,
-        ],
-        decode: [
-            signal.tracking.line_jitter_px * reference_scale,
-            luma_chroma_crosstalk,
             0.0,
+        ],
+        noise_decode: [
+            signal.noise.luma_amount.max(0.0),
+            signal.noise.chroma_amount.max(0.0),
+            luma_chroma_crosstalk,
             0.0,
         ],
     }
@@ -567,7 +582,7 @@ mod tests {
 
         assert_eq!(uniforms.tone_luma[3], 0.0);
         assert_eq!(uniforms.chroma[3], 0.0);
-        assert_eq!(uniforms.decode[1], 0.0);
+        assert_eq!(uniforms.noise_decode[2], 0.0);
     }
 
     #[test]
