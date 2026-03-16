@@ -53,7 +53,7 @@ impl Default for GpuContextDescriptor {
     fn default() -> Self {
         Self {
             label: "casseted-core",
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::all(),
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             required_features: wgpu::Features::empty(),
@@ -206,16 +206,16 @@ mod tests {
         let descriptor = GpuContextDescriptor::default();
 
         assert_eq!(descriptor.label, "casseted-core");
-        assert_eq!(descriptor.backends, wgpu::Backends::PRIMARY);
+        assert_eq!(descriptor.backends, wgpu::Backends::all());
         assert_eq!(descriptor.required_features, wgpu::Features::empty());
     }
 
     #[test]
     fn shader_module_descriptor_wraps_wgsl_source() {
-        let shader = shader_source(ShaderId::SignalPreview);
+        let shader = shader_source(ShaderId::StillAnalog);
         let descriptor = shader_module_descriptor(Some(shader.label), shader.source);
 
-        assert_eq!(descriptor.label, Some("signal_preview"));
+        assert_eq!(descriptor.label, Some("still_analog"));
         match descriptor.source {
             wgpu::ShaderSource::Wgsl(source) => {
                 assert!(source.contains("@vertex"));

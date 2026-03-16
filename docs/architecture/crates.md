@@ -34,3 +34,14 @@ The goal is not to describe every VHS characteristic upfront. The crate only pro
 - helper functions for building shader modules from WGSL
 
 This crate should stay focused on runtime setup and low-level GPU utilities so the first pipeline can build on top of it without mixing in signal-domain logic.
+
+## `casseted-pipeline`
+
+`casseted-pipeline` now contains the first concrete still-image processing path. It owns the compact render-to-texture flow that connects:
+
+- `ImageFrame` input data
+- `SignalSettings` domain parameters
+- built-in WGSL shader lookup from `casseted-shaderlib`
+- `wgpu` execution via `casseted-gpu`
+
+At this stage the crate intentionally implements one small effect pipeline rather than a generalized pass system.

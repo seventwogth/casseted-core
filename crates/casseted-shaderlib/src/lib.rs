@@ -2,19 +2,19 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderId {
-    SignalPreview,
+    StillAnalog,
 }
 
 impl ShaderId {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::SignalPreview => "signal_preview",
+            Self::StillAnalog => "still_analog",
         }
     }
 
     pub const fn relative_path(self) -> &'static str {
         match self {
-            Self::SignalPreview => "shaders/passes/signal_preview.wgsl",
+            Self::StillAnalog => "shaders/passes/still_analog.wgsl",
         }
     }
 }
@@ -27,14 +27,14 @@ pub struct ShaderSource {
     pub source: &'static str,
 }
 
-pub const SIGNAL_PREVIEW_SHADER: ShaderSource = ShaderSource {
-    id: ShaderId::SignalPreview,
-    label: "signal_preview",
-    relative_path: "shaders/passes/signal_preview.wgsl",
-    source: include_str!("../../../shaders/passes/signal_preview.wgsl"),
+pub const STILL_ANALOG_SHADER: ShaderSource = ShaderSource {
+    id: ShaderId::StillAnalog,
+    label: "still_analog",
+    relative_path: "shaders/passes/still_analog.wgsl",
+    source: include_str!("../../../shaders/passes/still_analog.wgsl"),
 };
 
-pub const BUILTIN_SHADERS: [ShaderSource; 1] = [SIGNAL_PREVIEW_SHADER];
+pub const BUILTIN_SHADERS: [ShaderSource; 1] = [STILL_ANALOG_SHADER];
 
 pub fn builtin_shaders() -> &'static [ShaderSource] {
     &BUILTIN_SHADERS
@@ -42,7 +42,7 @@ pub fn builtin_shaders() -> &'static [ShaderSource] {
 
 pub fn shader_source(id: ShaderId) -> ShaderSource {
     match id {
-        ShaderId::SignalPreview => SIGNAL_PREVIEW_SHADER,
+        ShaderId::StillAnalog => STILL_ANALOG_SHADER,
     }
 }
 
@@ -55,32 +55,32 @@ pub fn find_shader(label: &str) -> Option<ShaderSource> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SIGNAL_PREVIEW_SHADER, ShaderId, builtin_shaders, shader_source};
+    use super::{BUILTIN_SHADERS, STILL_ANALOG_SHADER, ShaderId, shader_source};
 
     #[test]
     fn embedded_shader_is_not_empty() {
-        assert!(SIGNAL_PREVIEW_SHADER.source.contains("@vertex"));
+        assert!(STILL_ANALOG_SHADER.source.contains("@vertex"));
     }
 
     #[test]
     fn shader_lookup_by_id_returns_expected_asset() {
-        let shader = shader_source(ShaderId::SignalPreview);
+        let shader = shader_source(ShaderId::StillAnalog);
 
-        assert_eq!(shader.label, "signal_preview");
-        assert_eq!(shader.relative_path, "shaders/passes/signal_preview.wgsl");
+        assert_eq!(shader.label, "still_analog");
+        assert_eq!(shader.relative_path, "shaders/passes/still_analog.wgsl");
     }
 
     #[test]
-    fn builtin_registry_contains_signal_preview() {
+    fn builtin_registry_contains_still_analog() {
         assert!(
-            builtin_shaders()
+            BUILTIN_SHADERS
                 .iter()
-                .any(|shader| shader.id == ShaderId::SignalPreview)
+                .any(|shader| shader.id == ShaderId::StillAnalog)
         );
     }
 
     #[test]
     fn embedded_shader_contains_fragment_entrypoint() {
-        assert!(SIGNAL_PREVIEW_SHADER.source.contains("fs_main"));
+        assert!(STILL_ANALOG_SHADER.source.contains("textureSample"));
     }
 }

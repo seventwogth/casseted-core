@@ -1,15 +1,20 @@
-use casseted_pipeline::PipelineDefinition;
-use casseted_types::FrameDescriptor;
+use casseted_pipeline::StillImagePipeline;
+use casseted_types::{FrameSize, ImageFrame};
 
 fn main() {
-    let pipeline = PipelineDefinition::signal_preview(FrameDescriptor::default());
-    let shader = pipeline.shader();
+    let pipeline = StillImagePipeline::default();
+    let input = ImageFrame::solid_rgba8(FrameSize::new(8, 8), [128, 96, 80, 255]);
 
     println!("casseted-core workspace scaffold");
     println!(
-        "default frame: {}x{}",
-        pipeline.frame.size.width, pipeline.frame.size.height
+        "demo frame: {}x{}",
+        input.descriptor.size.width, input.descriptor.size.height
     );
-    println!("preset: {:?}", pipeline.preset);
-    println!("shader: {}", shader.label);
+    println!("shader: {}", pipeline.shader_id.label());
+    println!(
+        "signal: blur={} chroma_offset={} noise={}",
+        pipeline.signal.luma.blur_px,
+        pipeline.signal.chroma.offset_px,
+        pipeline.signal.noise.luma_amount
+    );
 }
