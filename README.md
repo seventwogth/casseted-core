@@ -46,3 +46,25 @@ At this stage the project does not implement a full GPU pipeline, real image pro
 ## Current status
 
 The workspace is intended as a clean starting point for the next iteration. Every crate contains minimal but meaningful code and is expected to compile together with `cargo check`.
+
+## CLI
+
+The current CLI is a local developer utility for running the first still-image pipeline on one PNG image.
+
+Basic usage:
+
+```bash
+cargo run -p casseted-cli -- input.png output.png
+```
+
+Example with a few effect overrides:
+
+```bash
+cargo run -p casseted-cli -- input.png output.png --luma-blur 1.5 --chroma-offset 1.25 --line-jitter 0.8
+```
+
+Current notes:
+
+- input is read as PNG
+- output is written as PNG
+- if no flags are provided, the built-in mild analog defaults are used

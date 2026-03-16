@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 casseted-pipeline.workspace = true
 casseted-types.workspace = true
+image.workspace = true
 
 [[bin]]
 name = "casseted-cli"

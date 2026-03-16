@@ -24,5 +24,6 @@ casseted-shaderlib = { path = "crates/casseted-shaderlib" }
 casseted-gpu = { path = "crates/casseted-gpu" }
 casseted-pipeline = { path = "crates/casseted-pipeline" }
 casseted-testing = { path = "crates/casseted-testing" }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 pollster = "0.4.0"
 wgpu = "0.19.4"
