@@ -90,3 +90,5 @@ Current testing is intentionally lightweight:
 - GPU smoke tests for the still-image pipeline
 - a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
 - shared helpers in [`docs/testing.md`](./docs/testing.md)
+
+### TESTING // HELLO
