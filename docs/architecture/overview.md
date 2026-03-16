@@ -18,4 +18,4 @@ Current data flow:
 
 This keeps shader loading and GPU runtime concerns concrete, while leaving more advanced image processing, caching, and multi-pass orchestration for later stages.
 
-For the next phase, the signal model itself is specified separately in [`vhs-model-v1.md`](./vhs-model-v1.md) so future implementation work can grow from an explicit domain contract instead of ad-hoc shader parameters.
+For the next phase, the signal model itself is specified separately in [`signal-model-v1.md`](./signal-model-v1.md) so future implementation work can grow from an explicit domain contract instead of ad-hoc shader parameters.

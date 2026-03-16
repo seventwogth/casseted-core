@@ -55,7 +55,7 @@ The main layer boundary is intentionally simple:
 
 The workspace now acts as a clean first milestone: it contains one real still-image GPU effect, one working CLI, and a small test/documentation foundation for the next stage of development.
 
-That next stage is now anchored by [`docs/architecture/vhs-model-v1.md`](./docs/architecture/vhs-model-v1.md), which formalizes the signal flow and parameter groups before deeper pipeline changes are introduced.
+That next stage is now anchored by [`docs/architecture/signal-model-v1.md`](./docs/architecture/signal-model-v1.md), which formalizes the signal flow and parameter groups before deeper pipeline changes are introduced.
 
 ## CLI
 

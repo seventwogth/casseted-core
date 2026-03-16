@@ -1,4 +1,4 @@
-# 0004: Formalize VHS / analog v1 before expanding the pipeline
+# 0004: Formalize signal-model v1 before expanding the pipeline
 
 ## Status
 
@@ -6,15 +6,15 @@ Accepted
 
 ## Context
 
-The workspace already has a clean architectural foundation and one functioning still-image GPU prototype. The next phase needs a more explicit VHS / analog model, but rewriting the pipeline immediately would risk mixing architectural work with unresolved signal assumptions.
+The workspace already has a clean architectural foundation and one functioning still-image GPU prototype. The next phase needs a more explicit still-image signal model, but rewriting the pipeline immediately would risk mixing architectural work with unresolved signal assumptions.
 
 ## Decision
 
-Adopt a formal VHS / analog v1 model in `casseted-signal` and document it in `docs/architecture/vhs-model-v1.md`.
+Adopt a formal signal-model v1 in `casseted-signal` and document it in `docs/architecture/signal-model-v1.md`.
 
 The formal model will:
 
-- define a stable signal-flow for the next implementation phase
+- define a stable still-image signal-flow for the next implementation phase
 - group parameters by signal responsibility instead of current shader uniform layout
 - make approximation boundaries explicit
 - coexist with the current prototype-oriented `SignalSettings`

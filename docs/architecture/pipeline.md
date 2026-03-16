@@ -28,6 +28,7 @@ Deferred on purpose:
 - multi-pass processing
 - explicit Y/C separation passes
 - formal `VhsModel` projection into pipeline stages
+- exact ownership split between stage planning and GPU execution for the formal model
 - video/frame-sequence support
 - file I/O and image codecs
 - optimized resource reuse and cached pipeline objects

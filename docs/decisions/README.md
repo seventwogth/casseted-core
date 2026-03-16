@@ -7,4 +7,4 @@ Current decisions:
 - [`0001-workspace-layout.md`](./0001-workspace-layout.md)
 - [`0002-shader-and-gpu-foundation.md`](./0002-shader-and-gpu-foundation.md)
 - [`0003-first-milestone-scope.md`](./0003-first-milestone-scope.md)
-- [`0004-vhs-model-v1-foundation.md`](./0004-vhs-model-v1-foundation.md)
+- [`0004-signal-model-v1.md`](./0004-signal-model-v1.md)

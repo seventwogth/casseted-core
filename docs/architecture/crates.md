@@ -11,6 +11,8 @@
 
 This crate should stay free of GPU runtime concerns and avoid collecting test-only conveniences, so it can be used by pipeline planning, CPU-side orchestration, and future serialization work.
 
+For signal-model v1, no new signal-specific types are moved here yet. The current `FrameDescriptor`, `FrameSize`, `PixelFormat`, and `ImageFrame` remain sufficient because the new work is about signal semantics, not a new shared frame container API.
+
 ## `casseted-signal`
 
 `casseted-signal` now exposes two complementary layers:
@@ -60,6 +62,8 @@ This crate stays intentionally ignorant of repository shader identifiers. `casse
 - `wgpu` execution via `casseted-gpu`
 
 At this stage the crate intentionally implements one small effect pipeline rather than a generalized pass system.
+
+The next responsibility for this crate is not a runtime rewrite, but a projection layer from `VhsModel` into concrete still-image processing stages.
 
 ## `casseted-cli`
 

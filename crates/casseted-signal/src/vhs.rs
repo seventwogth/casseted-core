@@ -58,12 +58,19 @@ pub enum OutputTransfer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VhsSignalStage {
+    /// Normalize the input frame into the working assumptions for still-image v1.
     InputDecode,
+    /// Convert gamma-coded RGB into a luma/chroma representation for later loss modeling.
     RgbToLumaChroma,
+    /// Apply luma-oriented bandwidth loss and detail shaping.
     LumaRecordPath,
+    /// Apply chroma-specific degradation, delay, and phase errors.
     ChromaRecordPath,
+    /// Apply spatial displacement that approximates tape transport instability.
     TransportInstability,
+    /// Add stochastic corruption such as grain-like noise and dropouts.
     NoiseAndDropouts,
+    /// Reconstruct a display-space image from the degraded signal representation.
     DecodeOutput,
 }
 
@@ -103,6 +110,13 @@ pub struct VhsModel {
 }
 
 impl VhsModel {
+    pub const fn for_standard(standard: VideoStandard) -> Self {
+        match standard {
+            VideoStandard::NtscM => Self::ntsc_v1(),
+            VideoStandard::Pal => Self::pal_v1(),
+        }
+    }
+
     pub const fn ntsc_v1() -> Self {
         Self {
             standard: VideoStandard::NtscM,
@@ -188,14 +202,17 @@ impl VhsModel {
 
 impl Default for VhsModel {
     fn default() -> Self {
-        Self::ntsc_v1()
+        Self::for_standard(VideoStandard::NtscM)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VhsInputSettings {
+    /// Working luma/chroma matrix used after input normalization.
     pub matrix: VideoMatrix,
+    /// Transfer curve assumed for the incoming RGB image.
     pub transfer: InputTransfer,
+    /// Temporal interpretation of the source frame semantics.
     pub temporal_sampling: TemporalSampling,
 }
 
@@ -281,6 +298,15 @@ mod tests {
         assert_eq!(model.standard, VideoStandard::Pal);
         assert_eq!(model.chroma.bandwidth_khz, 400.0);
         assert_eq!(model.transport.head_switching_band_lines, 8);
+    }
+
+    #[test]
+    fn for_standard_returns_matching_preset() {
+        let ntsc = VhsModel::for_standard(VideoStandard::NtscM);
+        let pal = VhsModel::for_standard(VideoStandard::Pal);
+
+        assert_eq!(ntsc, VhsModel::ntsc_v1());
+        assert_eq!(pal, VhsModel::pal_v1());
     }
 
     #[test]
