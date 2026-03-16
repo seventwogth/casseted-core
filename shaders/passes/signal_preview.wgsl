@@ -20,7 +20,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
 
 @fragment
 fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
-    let tint = vec3<f32>(0.92, 0.85, 0.72);
-    let scanline = 0.04 * sin(in.uv.y * 720.0);
-    return vec4<f32>(tint - scanline, 1.0);
+    let base = vec3<f32>(0.92, 0.85, 0.72);
+    let band = 0.05 * sin(in.uv.y * 720.0);
+    let edge = smoothstep(0.0, 0.15, in.uv.x) * smoothstep(1.0, 0.85, in.uv.x);
+    let color = base - band + vec3<f32>(0.0, 0.02, 0.03) * edge;
+    return vec4<f32>(color, 1.0);
 }

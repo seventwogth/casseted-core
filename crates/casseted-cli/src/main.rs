@@ -11,5 +11,5 @@ fn main() {
         pipeline.frame.size.width, pipeline.frame.size.height
     );
     println!("preset: {:?}", pipeline.preset);
-    println!("shader: {}", shader.name);
+    println!("shader: {}", shader.label);
 }

@@ -14,4 +14,5 @@ This keeps the early core focused while leaving room for later implementation wo
 
 Further crate notes:
 
+- [`overview.md`](./overview.md)
 - [`crates.md`](./crates.md)

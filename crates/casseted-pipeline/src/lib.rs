@@ -1,7 +1,7 @@
 //! Minimal composition layer for frame metadata, signal settings, and shader selection.
 
 use casseted_gpu::GpuRequirements;
-use casseted_shaderlib::{ShaderSource, find_shader};
+use casseted_shaderlib::{ShaderId, ShaderSource, shader_source};
 use casseted_signal::{SignalPlan, SignalSettings};
 use casseted_types::FrameDescriptor;
 
@@ -15,7 +15,7 @@ pub struct PipelineDefinition {
     pub preset: PipelinePreset,
     pub frame: FrameDescriptor,
     pub signal: SignalSettings,
-    pub shader_name: &'static str,
+    pub shader_id: ShaderId,
 }
 
 impl PipelineDefinition {
@@ -24,7 +24,7 @@ impl PipelineDefinition {
             preset: PipelinePreset::SignalPreview,
             frame,
             signal: SignalSettings::default(),
-            shader_name: "signal_preview",
+            shader_id: ShaderId::SignalPreview,
         }
     }
 
@@ -33,7 +33,7 @@ impl PipelineDefinition {
     }
 
     pub fn shader(&self) -> ShaderSource {
-        find_shader(self.shader_name).expect("pipeline preset references a built-in shader")
+        shader_source(self.shader_id)
     }
 
     pub fn gpu_requirements(&self) -> GpuRequirements {
@@ -50,6 +50,6 @@ mod tests {
     fn signal_preview_uses_embedded_shader() {
         let pipeline = PipelineDefinition::signal_preview(FrameDescriptor::default());
 
-        assert_eq!(pipeline.shader().name, "signal_preview");
+        assert_eq!(pipeline.shader().label, "signal_preview");
     }
 }
