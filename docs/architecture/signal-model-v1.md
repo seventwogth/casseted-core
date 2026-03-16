@@ -125,7 +125,7 @@ deterministic horizontal line jitter and small vertical offset.
 ### 7. NoiseAndDropouts
 
 Purpose:
-remove the “pure digital filter” feel by injecting stochastic corruption.
+remove the "pure digital filter" feel by injecting stochastic corruption.
 
 Current v1 shape:
 additive luma/chroma noise. Dropout parameters exist in the formal model but are not yet implemented in the shader.
@@ -203,6 +203,11 @@ The current still-image pipeline now has an explicit narrow projection from `Vhs
 - `prototype_signal_from_model()` converts the formal model into compact preview controls
 - `effect_uniforms()` resolves those controls into the WGSL uniform block used by `shaders/passes/still_analog.wgsl`
 
+There are two intentional modes:
+
+- `StillImagePipeline::from_vhs_model()` keeps the current model-aligned subset active
+- `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection terms neutral
+
 Important constraint:
 this is a projection layer, not a graph engine and not a new runtime abstraction.
 
@@ -215,11 +220,12 @@ Current implemented mapping:
 - `VhsChromaSettings.bandwidth_khz` -> preview chroma blur proxy -> `effect.chroma.y`
 - `VhsChromaSettings.saturation_gain` -> `effect.chroma.z`
 - `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma.w`
-- `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.decode.y`
+- `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.noise_decode.z`
 
 Secondary mappings that are still present but not the main focus of this phase:
 
 - `VhsTransportSettings.line_jitter_us` -> preview line jitter proxy
+- `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> preview noise amplitudes
 
 ## Implementation Status

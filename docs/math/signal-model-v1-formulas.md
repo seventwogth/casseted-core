@@ -68,6 +68,8 @@ These secondary terms are documented here because they are implemented, but they
 | \(g_C\) | chroma saturation gain | `VhsChromaSettings.saturation_gain` |
 | \(\beta_V\) | vertical chroma blend | `VhsDecodeSettings.chroma_vertical_blend` |
 | \(\epsilon_{YC}\) | residual Y/C leakage | `VhsDecodeSettings.luma_chroma_crosstalk` |
+| \(\tau_J\) | formal line-jitter amplitude | `VhsTransportSettings.line_jitter_us` |
+| \(\delta_V\) | still-frame vertical offset snapshot | `SignalSettings.tracking.vertical_offset_lines` |
 | \(a_Y\) | luma noise amplitude | `SignalSettings.noise.luma_amount` |
 | \(a_C\) | chroma noise amplitude | `SignalSettings.noise.chroma_amount` |
 | \(p_J\) | line-jitter amplitude in reference pixels | `SignalSettings.tracking.line_jitter_px` |
@@ -285,7 +287,7 @@ r_C = s_{\text{ref}} \cdot p_C
 where:
 
 - \(p_\tau = \texttt{SignalSettings.chroma.offset\_px}\)
-- \(p_C = \texttt{SignalSettings.chroma.bleed\_px}\)
+- \(p_C = \texttt{SignalSettings.chroma.bleed\_px}\), where `bleed_px` is a legacy preview name for the chroma blur radius proxy
 
 The delayed chroma taps are sampled at:
 
@@ -377,7 +379,7 @@ the still pass reconstructs directly to clamped RGB in the final fragment stage.
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::DecodeOutput`
-- uniform mapping: `effect.decode.y`
+- uniform mapping: `effect.noise_decode.z`
 - shader implementation: `reconstructed_y`, `reconstructed_chroma`, `yuv_to_rgb()`
 
 ## 5. Secondary Integrated Terms
@@ -390,17 +392,28 @@ These are implemented now because they already existed in the prototype path, bu
 \Delta x(\ell, f) = p_J \cdot s_{\text{ref}} \cdot \sin\left(0.37(\ell + 0.5f)\right)
 \]
 
-The current fragment pass applies:
+The current fragment pass also applies a vertical still-frame offset:
 
 \[
+\Delta y = \delta_V
+\]
+
+and evaluates transport-adjusted coordinates as:
+
+\[
+\ell = \left\lfloor vH + \delta_V \right\rfloor
+\qquad
 u' = u + \frac{\Delta x(\ell, f)}{W}
+\qquad
+v' = v + \frac{\delta_V}{H}
 \]
 
 Mapping:
 
 - formal source: `VhsTransportSettings.line_jitter_us`
+- formal source for \(\delta_V\): `VhsTransportSettings.vertical_wander_lines`
 - pipeline projection: `prototype_signal_from_model()` converts \(\mu s \to\) reference pixels
-- shader uniform: `effect.decode.x`
+- shader uniforms: `effect.transport.x`, `effect.transport.y`, `effect.transport.z`
 
 ### 5.2 Additive Noise
 
@@ -418,7 +431,7 @@ Mapping:
 
 - formal source: `VhsNoiseSettings.luma_sigma`, `VhsNoiseSettings.chroma_sigma`
 - pipeline projection: `prototype_signal_from_model()`
-- shader uniforms: `effect.noise_tracking.x`, `effect.noise_tracking.y`
+- shader uniforms: `effect.noise_decode.x`, `effect.noise_decode.y`
 
 ## 6. Mapping To Code
 
@@ -445,8 +458,8 @@ Mapping:
 | `RgbToLumaChroma` | fused working decomposition | `rgb_to_yuv()` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain | `blurred_luma`, `edge_band`, `luma` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `chroma_horizontal`, `chroma_vertical`, `chroma` |
-| `TransportInstability` | `SignalSettings.tracking.*` | `line_jitter`, `base_uv` |
-| `NoiseAndDropouts` | `SignalSettings.noise.*` | `luma_noise`, `chroma_noise` |
+| `TransportInstability` | `SignalSettings.tracking.*`; fused ahead of both luma and chroma sampling | `line_jitter`, `base_uv` |
+| `NoiseAndDropouts` | noise-only subset of the stage via `SignalSettings.noise.*` | `luma_noise`, `chroma_noise` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `reconstructed_y`, `reconstructed_chroma`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
@@ -489,17 +502,31 @@ p_C = \min\left(4,\; \frac{\max(0, 1000 - b_C)}{400}\right)
 p_J = 13.5 \cdot \tau_J \cdot 0.5
 \]
 
+\[
+a_Y = \min(1,\; 1.25 \cdot \sigma_Y)
+\qquad
+a_C = \min(1,\; 0.5 \cdot \sigma_C)
+\]
+
 where:
 
 - \(b_Y\) is in MHz
 - \(b_C\) is in kHz
 - \(\tau_C\) and \(\tau_J\) are in microseconds
+- \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas
 
 These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
 
 - `prototype_signal_from_model()`
+- `line_jitter_px_from_timebase()`
 - `luma_blur_from_bandwidth()`
 - `chroma_bleed_from_bandwidth()`
+- `luma_noise_amount_from_sigma()`
+- `chroma_noise_amount_from_sigma()`
+- `detail_mix_from_preemphasis()`
+
+Important runtime note:
+`StillImagePipeline::from_vhs_model()` uses the full projection above. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), and \(\epsilon_{YC}\) are held at zero unless a formal model is also present.
 
 ## 8. Explicitly Not Modeled At This Stage
 

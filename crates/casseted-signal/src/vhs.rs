@@ -231,9 +231,11 @@ pub struct VhsInputSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VhsToneSettings {
-    /// Luma threshold where the soft-knee highlight rolloff begins.
+    /// Normalized luma threshold where the soft-knee highlight rolloff begins.
+    /// The current still-image path clamps this to `[0, 0.999]`.
     pub highlight_soft_knee: f32,
     /// Compression strength applied above the soft-knee threshold.
+    /// The current still-image path treats negative values as `0`.
     pub highlight_compression: f32,
 }
 
@@ -286,8 +288,10 @@ pub struct VhsNoiseSettings {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VhsDecodeSettings {
     /// Vertical blend factor used when reconstructing low-bandwidth chroma.
+    /// The current still-image path clamps this to `[0, 1]`.
     pub chroma_vertical_blend: f32,
     /// Amount of residual Y/C leakage kept in the output.
+    /// The current still-image path clamps this to `[0, 1]`.
     pub luma_chroma_crosstalk: f32,
     pub output_transfer: OutputTransfer,
 }
