@@ -4,6 +4,7 @@ struct EffectUniform {
     luma_degradation: vec4<f32>,
     chroma_degradation: vec4<f32>,
     reconstruction_output: vec4<f32>,
+    reconstruction_aux: vec4<f32>,
 };
 
 struct VsOutput {

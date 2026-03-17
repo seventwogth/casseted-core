@@ -53,7 +53,7 @@ impl StageReferenceCase {
             Self::LumaChromaTransform => "4.2",
             Self::LumaDegradation => "4.3",
             Self::ChromaDegradation => "4.4",
-            Self::ReconstructionOutput => "4.5 / 5.2",
+            Self::ReconstructionOutput => "4.5 / 5.2 / 5.3",
         }
     }
 
@@ -93,6 +93,8 @@ impl StageReferenceCase {
                 let mut model = neutral_reference_model();
                 model.noise.luma_sigma = 0.018;
                 model.noise.chroma_sigma = 0.022;
+                model.noise.dropout_probability_per_line = 0.06;
+                model.noise.dropout_mean_span_us = 1.8;
                 model.decode.luma_chroma_crosstalk = 0.04;
                 StillImagePipeline::from_vhs_model(model)
             }
@@ -117,8 +119,10 @@ impl StageReferenceCase {
                 true
             }
             Self::ReconstructionOutput => {
-                pipeline.signal.noise.luma_amount += 0.015;
-                pipeline.signal.noise.chroma_amount += 0.010;
+                if let Some(model) = pipeline.model.as_mut() {
+                    model.noise.dropout_probability_per_line += 0.02;
+                    model.noise.dropout_mean_span_us += 0.45;
+                }
                 true
             }
         }
@@ -172,6 +176,16 @@ impl StageReferenceCase {
                     "luma_degradation.detail_mix",
                 );
                 assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_threshold,
+                    0.76,
+                    "luma_degradation.highlight_bleed_threshold",
+                );
+                assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_amount,
+                    0.0,
+                    "luma_degradation.highlight_bleed_amount",
+                );
+                assert_approx_eq(
                     stages.chroma_degradation.offset_px,
                     0.0,
                     "chroma_degradation.offset_px",
@@ -205,6 +219,16 @@ impl StageReferenceCase {
                     stages.reconstruction_output.luma_chroma_crosstalk,
                     0.0,
                     "reconstruction_output.luma_chroma_crosstalk",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_line_probability,
+                    0.0,
+                    "reconstruction_output.dropout_line_probability",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_span_px,
+                    0.0,
+                    "reconstruction_output.dropout_span_px",
                 );
             }
             Self::LumaChromaTransform => {
@@ -234,6 +258,16 @@ impl StageReferenceCase {
                     "luma_degradation.detail_mix",
                 );
                 assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_threshold,
+                    0.96,
+                    "luma_degradation.highlight_bleed_threshold",
+                );
+                assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_amount,
+                    0.0,
+                    "luma_degradation.highlight_bleed_amount",
+                );
+                assert_approx_eq(
                     stages.chroma_degradation.offset_px,
                     0.0,
                     "chroma_degradation.offset_px",
@@ -263,6 +297,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.luma_chroma_crosstalk",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_line_probability,
+                    0.0,
+                    "reconstruction_output.dropout_line_probability",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_span_px,
+                    0.0,
+                    "reconstruction_output.dropout_span_px",
+                );
             }
             Self::LumaDegradation => {
                 assert_approx_eq(
@@ -281,6 +325,16 @@ impl StageReferenceCase {
                     "luma_degradation.detail_mix",
                 );
                 assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_threshold,
+                    0.96,
+                    "luma_degradation.highlight_bleed_threshold",
+                );
+                assert_approx_eq(
+                    stages.luma_degradation.highlight_bleed_amount,
+                    0.03634069,
+                    "luma_degradation.highlight_bleed_amount",
+                );
+                assert_approx_eq(
                     stages.chroma_degradation.saturation,
                     1.0,
                     "chroma_degradation.saturation",
@@ -289,6 +343,16 @@ impl StageReferenceCase {
                     stages.reconstruction_output.luma_chroma_crosstalk,
                     0.0,
                     "reconstruction_output.luma_chroma_crosstalk",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_line_probability,
+                    0.0,
+                    "reconstruction_output.dropout_line_probability",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_span_px,
+                    0.0,
+                    "reconstruction_output.dropout_span_px",
                 );
             }
             Self::ChromaDegradation => {
@@ -317,6 +381,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.luma_chroma_crosstalk",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_line_probability,
+                    0.0,
+                    "reconstruction_output.dropout_line_probability",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_span_px,
+                    0.0,
+                    "reconstruction_output.dropout_span_px",
+                );
             }
             Self::ReconstructionOutput => {
                 assert_approx_eq(
@@ -338,6 +412,16 @@ impl StageReferenceCase {
                     stages.reconstruction_output.luma_chroma_crosstalk,
                     0.04,
                     "reconstruction_output.luma_chroma_crosstalk",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_line_probability,
+                    0.06,
+                    "reconstruction_output.dropout_line_probability",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.dropout_span_px,
+                    3.24,
+                    "reconstruction_output.dropout_span_px",
                 );
             }
         }

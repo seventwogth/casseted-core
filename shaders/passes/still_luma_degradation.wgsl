@@ -4,6 +4,7 @@ struct EffectUniform {
     luma_degradation: vec4<f32>,
     chroma_degradation: vec4<f32>,
     reconstruction_output: vec4<f32>,
+    reconstruction_aux: vec4<f32>,
 };
 
 struct VsOutput {
@@ -18,6 +19,32 @@ struct VsOutput {
 fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     let clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     return textureSample(working_texture, working_sampler, clamped).rgb;
+}
+
+fn highlight_mask(value: f32, threshold: f32) -> f32 {
+    let headroom = max(1e-5, 1.0 - threshold);
+    return clamp((value - threshold) / headroom, 0.0, 1.0);
+}
+
+fn highlight_bleed(uv: vec2<f32>, base_luma: f32) -> f32 {
+    let threshold = effect.luma_degradation.z;
+    let amount = effect.luma_degradation.w;
+    if (amount <= 1e-4 || threshold >= 0.999) {
+        return 0.0;
+    }
+
+    let inv_size = effect.frame.zw;
+    let smear_step_px = max(0.85, effect.luma_degradation.x * 0.9 + 0.65);
+    let smear_step = vec2<f32>(smear_step_px * inv_size.x, 0.0);
+    let prev_near = sample_working_signal(uv - smear_step).x;
+    let prev_mid = sample_working_signal(uv - smear_step * 2.0).x;
+    let prev_far = sample_working_signal(uv - smear_step * 3.5).x;
+    let center = sample_working_signal(uv).x;
+    let bleed_energy = highlight_mask(prev_near, threshold) * 0.52
+        + highlight_mask(prev_mid, threshold) * 0.28
+        + highlight_mask(prev_far, threshold) * 0.12
+        + highlight_mask(center, threshold) * 0.08;
+    return bleed_energy * amount * (1.0 - base_luma);
 }
 
 fn degrade_luma(uv: vec2<f32>) -> f32 {
@@ -36,11 +63,12 @@ fn degrade_luma(uv: vec2<f32>) -> f32 {
         + right_inner.x * 0.22
         + right_outer.x * 0.15;
     let edge_band = left_inner.x * 0.25 + center.x * 0.5 + right_inner.x * 0.25;
-    return clamp(
+    let base_luma = clamp(
         blurred_luma + (center.x - edge_band) * effect.luma_degradation.y,
         0.0,
         1.0,
     );
+    return clamp(base_luma + highlight_bleed(uv, base_luma), 0.0, 1.0);
 }
 
 @vertex

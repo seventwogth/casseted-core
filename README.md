@@ -60,6 +60,7 @@ The current still-image path is deliberately compact:
 - five logical implementation stages
 - four WGSL render passes with three intermediate textures
 - no render graph or plugin-style orchestration
+- restrained second-order artifacts integrated into the existing luma and reconstruction stages instead of separate effect passes
 
 The current implementation path is anchored by:
 
@@ -69,6 +70,8 @@ The current implementation path is anchored by:
 Agent stage log:
 
 - [`docs/agent-log/0001-limited-multi-pass-transition.md`](./docs/agent-log/0001-limited-multi-pass-transition.md)
+- [`docs/agent-log/0002-chroma-path-refinement.md`](./docs/agent-log/0002-chroma-path-refinement.md)
+- [`docs/agent-log/0003-highlight-bleed-and-dropout.md`](./docs/agent-log/0003-highlight-bleed-and-dropout.md)
 
 ## CLI
 
@@ -91,7 +94,7 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
-- the current limited multi-pass calibration emphasizes tone shoulder, luma softness, and chroma bandwidth loss ahead of jitter-heavy distortion
+- the current limited multi-pass calibration emphasizes tone shoulder, luma softness, restrained highlight bleed, chroma bandwidth loss, and mild dropout ahead of jitter-heavy distortion
 - aggressive manual overrides are softened into effective preview ranges before the WGSL passes run
 - when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
 
