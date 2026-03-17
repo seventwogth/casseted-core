@@ -89,7 +89,7 @@ Those stages now execute through a limited four-pass runtime:
 | Input conditioning pass | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, plus the currently spatial subset of `TransportInstability` | `still_input_conditioning.wgsl` |
 | Luma pass | luma degradation | `LumaRecordPath` | `still_luma_degradation.wgsl` |
 | Chroma pass | chroma degradation | `ChromaRecordPath` | `still_chroma_degradation.wgsl` |
-| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
+| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (noise + restrained still-dropout subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
 
 Why this grouping is used now:
 
@@ -105,9 +105,9 @@ The current visual regression foundation keeps one committed source image plus o
 | --- | --- | --- | --- | --- |
 | Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `conditioned_sample_uv()`, `apply_tone_shaping()` | `input-conditioning-tone.png` |
 | Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the working-signal fan-out path | `rgb_to_yuv()` in `still_input_conditioning.wgsl` | `luma-chroma-transform.png` |
-| Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()` | `luma-degradation.png` |
+| Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()`, `highlight_bleed()` | `luma-degradation.png` |
 | Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | `chroma-degradation.png` |
-| Reconstruction / output | `4.5` plus noise note in `5.2` | `effect.reconstruction_output` | `sample_output_noise()`, `reconstruct_output()` | `reconstruction-output.png` |
+| Reconstruction / output | `4.5` plus notes in `5.2` and `5.3` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `sample_output_noise()`, `apply_dropout()`, `reconstruct_output()` | `reconstruction-output.png` |
 
 Current fixture policy:
 
@@ -147,7 +147,7 @@ Purpose:
 reduce horizontal detail and microcontrast while keeping image structure intact.
 
 Current v1 shape:
-compact horizontal low-pass plus a very small pre/de-emphasis-inspired residual term.
+compact horizontal low-pass plus a very small pre/de-emphasis-inspired residual term, extended by a highlight-gated asymmetric bleed approximation that only activates around bright luma.
 
 ### 5. ChromaRecordPath
 
@@ -171,7 +171,7 @@ Purpose:
 remove the "pure digital filter" feel by injecting stochastic corruption.
 
 Current v1 shape:
-additive luma/chroma noise. Dropout parameters exist in the formal model but are not yet implemented in the shader.
+additive luma/chroma noise plus a restrained line-oriented dropout approximation driven by the formal dropout parameters and resolved through adjacent-line concealment instead of temporal logic.
 
 ### 8. DecodeOutput
 
@@ -254,7 +254,7 @@ The current still-image pipeline now has an explicit narrow projection from `Vhs
 There are two intentional modes:
 
 - `StillImagePipeline::from_vhs_model()` keeps the current model-aligned subset active
-- `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection terms neutral
+- `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection/dropout terms neutral
 
 Preview-specific guardrail rule:
 
@@ -273,6 +273,7 @@ Current stage-aligned mapping:
 - luma degradation:
   `VhsLumaSettings.bandwidth_mhz` -> stronger preview luma blur proxy -> `effect.luma_degradation.x`
   `VhsLumaSettings.preemphasis_db` -> restrained detail residual gain -> `effect.luma_degradation.y`
+  existing tone + luma terms -> derived highlight-bleed threshold / amount -> `effect.luma_degradation.zw`
 - chroma degradation:
   `VhsChromaSettings.delay_us` -> attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
   `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma bandwidth-loss proxy -> `effect.chroma_degradation.y`
@@ -280,6 +281,7 @@ Current stage-aligned mapping:
   `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
 - reconstruction / output:
   `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
+  `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` -> restrained dropout probability / span terms -> `effect.reconstruction_aux.xy`
 
 The chroma pass keeps that uniform contract compact on purpose: the shader derives low-pass span, effective chroma cell width, and restrained smear from the same bandwidth-loss proxy instead of expanding the public preview API.
 
@@ -303,9 +305,10 @@ The current limited multi-pass still-image implementation is intentionally not b
 
 - tone rolloff and soft highlight compression
 - luma softness and microcontrast loss
+- restrained highlight bleed that reads like scan-direction signal smear, not bloom
 - chroma bandwidth loss, coarse horizontal chroma resolution loss, and restrained bleed
 - only mild chroma misregistration
-- only mild transport wobble and noise
+- only mild transport wobble, noise, and dropout
 
 Why this changed:
 
@@ -318,7 +321,8 @@ Scene-level calibration notes for the current limited multi-pass path:
 - text and hard verticals should soften and halo slightly before they wobble
 - neutral surfaces should show chroma softness before obvious hue splitting
 - bright highlights should roll into a shoulder instead of clipping to flat white
-- dark scenes should keep noise subordinate to tone and bandwidth loss
+- bright highlight edges should spread a little before they read as glow
+- dark scenes should keep noise and dropout subordinate to tone and bandwidth loss
 - skin and portrait areas should look softer and dirtier, not decoratively torn apart
 
 ## Implementation Status
@@ -326,15 +330,14 @@ Scene-level calibration notes for the current limited multi-pass path:
 The current repository now implements a reference-consistent subset of v1 as five logical stages executed through four WGSL passes:
 
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
-- luma low-pass/detail attenuation biased toward microcontrast loss
+- luma low-pass/detail attenuation biased toward microcontrast loss, with restrained highlight bleed embedded in the same branch
 - chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
-- reconstruction back to RGB with additive noise and restrained Y/C leakage
+- reconstruction back to RGB with additive noise, restrained line-segment dropout handling, and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 
 Still deferred:
 
 - chroma phase error
-- dropouts
 - head switching behavior
 - temporal model
 - render-graph planning
@@ -347,7 +350,7 @@ The next step is to extend this signal-model-aligned subset deliberately, not to
 The likely next implementation moves are:
 
 - refine luma and chroma branch behavior inside the current pass structure
-- add a more explicit transport/dropout stage if the still-image work starts to justify it
+- refine line-level transport/dropout interplay only if the current fused output stage stops being sufficient
 - improve resource reuse and calibration workflow without changing the domain contract
 
 All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).

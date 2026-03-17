@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::mpsc;
 
 const BYTES_PER_PIXEL_RGBA8: u32 = 4;
-const EFFECT_UNIFORM_FLOATS: usize = 20;
+const EFFECT_UNIFORM_FLOATS: usize = 24;
 const INTERMEDIATE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const REFERENCE_WIDTH_PX: f32 = 720.0;
 const BT601_SAMPLES_PER_US: f32 = 13.5;
@@ -372,6 +372,27 @@ fn chroma_noise_amount_from_sigma(chroma_sigma: f32) -> f32 {
 
 fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
     (preemphasis_db.max(0.0) * 0.015).min(0.12)
+}
+
+fn highlight_bleed_threshold(highlight_soft_knee: f32) -> f32 {
+    (highlight_soft_knee.clamp(0.0, 0.999) + 0.12).clamp(0.72, 0.96)
+}
+
+fn highlight_bleed_amount(blur_px: f32, highlight_compression: f32) -> f32 {
+    let blur_factor = blur_px.max(0.0) / (blur_px.max(0.0) + 1.25);
+    let compression = highlight_compression.max(0.0);
+    let compression_factor = compression / (compression + 1.0);
+
+    (blur_factor * (0.06 + compression_factor * 0.14)).min(0.16)
+}
+
+fn dropout_line_probability(dropout_probability_per_line: f32) -> f32 {
+    dropout_probability_per_line.clamp(0.0, 0.08)
+}
+
+fn dropout_span_px_from_time(dropout_mean_span_us: f32, reference_scale: f32) -> f32 {
+    (dropout_mean_span_us.max(0.0) * BT601_SAMPLES_PER_US * reference_scale)
+        .min(48.0 * reference_scale)
 }
 
 fn effective_preview_signal(signal: SignalSettings, model: Option<VhsModel>) -> SignalSettings {
@@ -826,6 +847,8 @@ struct InputConditioningStage {
 struct LumaDegradationStage {
     blur_px: f32,
     detail_mix: f32,
+    highlight_bleed_threshold: f32,
+    highlight_bleed_amount: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -844,6 +867,8 @@ struct ReconstructionOutputStage {
     chroma_noise_amount: f32,
     luma_chroma_crosstalk: f32,
     frame_index: f32,
+    dropout_line_probability: f32,
+    dropout_span_px: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -853,6 +878,7 @@ struct EffectUniforms {
     luma_degradation: [f32; 4],
     chroma_degradation: [f32; 4],
     reconstruction_output: [f32; 4],
+    reconstruction_aux: [f32; 4],
 }
 
 impl From<ResolvedStillStages> for EffectUniforms {
@@ -873,8 +899,8 @@ impl From<ResolvedStillStages> for EffectUniforms {
             luma_degradation: [
                 stages.luma_degradation.blur_px,
                 stages.luma_degradation.detail_mix,
-                0.0,
-                0.0,
+                stages.luma_degradation.highlight_bleed_threshold,
+                stages.luma_degradation.highlight_bleed_amount,
             ],
             chroma_degradation: [
                 stages.chroma_degradation.offset_px,
@@ -887,6 +913,12 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 stages.reconstruction_output.chroma_noise_amount,
                 stages.reconstruction_output.luma_chroma_crosstalk,
                 stages.reconstruction_output.frame_index,
+            ],
+            reconstruction_aux: [
+                stages.reconstruction_output.dropout_line_probability,
+                stages.reconstruction_output.dropout_span_px,
+                0.0,
+                0.0,
             ],
         }
     }
@@ -915,6 +947,10 @@ impl EffectUniforms {
             self.reconstruction_output[1],
             self.reconstruction_output[2],
             self.reconstruction_output[3],
+            self.reconstruction_aux[0],
+            self.reconstruction_aux[1],
+            self.reconstruction_aux[2],
+            self.reconstruction_aux[3],
         ];
 
         let mut bytes = [0_u8; EFFECT_UNIFORM_FLOATS * 4];
@@ -971,10 +1007,16 @@ fn resolve_luma_degradation_stage(
     let detail_mix = model
         .map(|vhs| detail_mix_from_preemphasis(vhs.luma.preemphasis_db))
         .unwrap_or(0.0);
+    let blur_px = signal.luma.blur_px.max(0.0) * reference_scale;
 
     LumaDegradationStage {
-        blur_px: signal.luma.blur_px.max(0.0) * reference_scale,
+        blur_px,
         detail_mix,
+        highlight_bleed_threshold: highlight_bleed_threshold(signal.tone.highlight_soft_knee),
+        highlight_bleed_amount: highlight_bleed_amount(
+            signal.luma.blur_px.max(0.0),
+            signal.tone.highlight_compression,
+        ),
     }
 }
 
@@ -1005,12 +1047,23 @@ fn resolve_reconstruction_output_stage(
     let luma_chroma_crosstalk = model
         .map(|vhs| vhs.decode.luma_chroma_crosstalk.clamp(0.0, 1.0))
         .unwrap_or(0.0);
+    let reference_scale = (input.descriptor.size.width as f32 / REFERENCE_WIDTH_PX).max(0.0);
+    let (dropout_line_probability, dropout_span_px) = model
+        .map(|vhs| {
+            (
+                dropout_line_probability(vhs.noise.dropout_probability_per_line),
+                dropout_span_px_from_time(vhs.noise.dropout_mean_span_us, reference_scale),
+            )
+        })
+        .unwrap_or((0.0, 0.0));
 
     ReconstructionOutputStage {
         luma_noise_amount: signal.noise.luma_amount.max(0.0),
         chroma_noise_amount: signal.noise.chroma_amount.max(0.0),
         luma_chroma_crosstalk,
         frame_index: input.descriptor.frame_index as f32,
+        dropout_line_probability,
+        dropout_span_px,
     }
 }
 
@@ -1096,8 +1149,23 @@ mod tests {
         let stages = resolve_still_stages(&input, SignalSettings::default(), None);
 
         assert_eq!(stages.luma_degradation.detail_mix, 0.0);
+        assert_eq!(stages.luma_degradation.highlight_bleed_amount, 0.0);
         assert_eq!(stages.chroma_degradation.vertical_blend, 0.0);
         assert_eq!(stages.reconstruction_output.luma_chroma_crosstalk, 0.0);
+        assert_eq!(stages.reconstruction_output.dropout_line_probability, 0.0);
+        assert_eq!(stages.reconstruction_output.dropout_span_px, 0.0);
+    }
+
+    #[test]
+    fn model_path_resolves_secondary_artifact_terms() {
+        let input = gradient_rgba8_image(FrameSize::new(720, 480));
+        let pipeline = StillImagePipeline::default();
+        let stages = resolve_still_stages(&input, pipeline.signal, pipeline.model);
+
+        assert!((stages.luma_degradation.highlight_bleed_threshold - 0.76).abs() < 1e-6);
+        assert!((stages.luma_degradation.highlight_bleed_amount - 0.06642922).abs() < 1e-6);
+        assert!((stages.reconstruction_output.dropout_line_probability - 0.002).abs() < 1e-6);
+        assert!((stages.reconstruction_output.dropout_span_px - 20.25).abs() < 1e-6);
     }
 
     #[test]
@@ -1108,8 +1176,12 @@ mod tests {
 
         assert!((uniforms.input_conditioning[0] - 0.64).abs() < 1e-6);
         assert!((uniforms.luma_degradation[1] - 0.045).abs() < 1e-6);
+        assert!((uniforms.luma_degradation[2] - 0.76).abs() < 1e-6);
+        assert!((uniforms.luma_degradation[3] - 0.06642922).abs() < 1e-6);
         assert!((uniforms.chroma_degradation[3] - 0.35).abs() < 1e-6);
         assert!((uniforms.reconstruction_output[2] - 0.02).abs() < 1e-6);
+        assert!((uniforms.reconstruction_aux[0] - 0.002).abs() < 1e-6);
+        assert!((uniforms.reconstruction_aux[1] - 20.25).abs() < 1e-6);
     }
 
     #[test]
