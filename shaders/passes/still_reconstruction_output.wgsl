@@ -12,7 +12,7 @@ struct VsOutput {
     @location(0) uv: vec2<f32>,
 };
 
-struct ConditionedInput {
+struct ProceduralSeed {
     noise_coord: vec2<f32>,
 };
 
@@ -50,7 +50,7 @@ fn smooth_noise_x(noise_coord: vec2<f32>, cells_per_px: f32, seed: vec2<f32>) ->
     let cell = floor(phase);
     let blend = fract(phase);
     let smooth_blend = blend * blend * (3.0 - 2.0 * blend);
-    let line_phase = noise_coord.y * seed.y + effect.reconstruction_output.w + seed.x * 1.37;
+    let line_phase = noise_coord.y * seed.y + effect.frame.w + seed.x * 1.37;
     let left = centered_hash(vec2<f32>(cell + seed.x, line_phase));
     let right = centered_hash(vec2<f32>(cell + seed.x + 1.0, line_phase));
     return mix(left, right, smooth_blend);
@@ -66,23 +66,30 @@ fn sample_chroma(uv: vec2<f32>) -> vec2<f32> {
     return textureSample(chroma_texture, signal_sampler, clamped).xy;
 }
 
-fn apply_input_conditioning(uv: vec2<f32>) -> ConditionedInput {
+fn frame_inv_size() -> vec2<f32> {
+    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+}
+
+// The final pass does not resample the signal through transport again.
+// It only reuses the same resolved scan-line phase as a procedural seed so
+// noise and dropout stay coherently anchored to the conditioned signal.
+fn procedural_seed_from_conditioned_phase(uv: vec2<f32>) -> ProceduralSeed {
     let frame_size = effect.frame.xy;
-    let inv_size = effect.frame.zw;
+    let inv_size = frame_inv_size();
     let line_index = floor(uv.y * frame_size.y + effect.input_conditioning.w);
-    let line_phase = line_index + effect.reconstruction_output.w * 0.5;
+    let line_phase = line_index + effect.frame.w * 0.5;
     let line_jitter = sin(line_phase * 0.37) * effect.input_conditioning.z * inv_size.x;
     let sample_uv = vec2<f32>(
         uv.x + line_jitter,
         uv.y + effect.input_conditioning.w * inv_size.y,
     );
 
-    var conditioned: ConditionedInput;
-    conditioned.noise_coord = vec2<f32>(
+    var seed: ProceduralSeed;
+    seed.noise_coord = vec2<f32>(
         floor(sample_uv.x * frame_size.x),
         floor(sample_uv.y * frame_size.y),
     );
-    return conditioned;
+    return seed;
 }
 
 fn sample_output_noise(
@@ -91,7 +98,7 @@ fn sample_output_noise(
     chroma_signal: vec2<f32>,
     dropout_mix: f32,
 ) -> OutputNoise {
-    let frame_index = effect.reconstruction_output.w;
+    let frame_index = effect.frame.w;
     let clamped_luma = clamp(luma_signal, 0.0, 1.0);
 
     var noise: OutputNoise;
@@ -156,7 +163,7 @@ fn line_dropout_mask(noise_coord: vec2<f32>) -> f32 {
         return 0.0;
     }
 
-    let frame_index = effect.reconstruction_output.w;
+    let frame_index = effect.frame.w;
     let line_index = noise_coord.y;
     let line_seed = hash12(vec2<f32>(line_index + 17.0, frame_index + 5.0));
     if (line_seed >= probability) {
@@ -193,7 +200,7 @@ fn apply_dropout(
         return vec4<f32>(luma_signal, chroma_signal, 0.0);
     }
 
-    let inv_size = effect.frame.zw;
+    let inv_size = frame_inv_size();
     let conceal_up_uv = uv - vec2<f32>(0.0, inv_size.y);
     let conceal_down_uv = uv + vec2<f32>(0.0, inv_size.y);
     let concealed_luma = sample_luma(conceal_up_uv) * 0.55 + sample_luma(conceal_down_uv) * 0.45;
@@ -202,11 +209,11 @@ fn apply_dropout(
     let line_strength = mix(
         0.35,
         0.72,
-        hash12(vec2<f32>(noise_coord.y + 73.0, effect.reconstruction_output.w + 11.0)),
+        hash12(vec2<f32>(noise_coord.y + 73.0, effect.frame.w + 11.0)),
     );
     let dropout_mix = mask * line_strength;
     let dropout_luma_noise =
-        (hash12(noise_coord + vec2<f32>(effect.reconstruction_output.w, 29.0)) - 0.5)
+        (hash12(noise_coord + vec2<f32>(effect.frame.w, 29.0)) - 0.5)
             * dropout_mix
             * 0.08;
     let dropout_luma = clamp(
@@ -259,15 +266,15 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
 
 @fragment
 fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
-    let conditioned = apply_input_conditioning(in.uv);
+    let seed = procedural_seed_from_conditioned_phase(in.uv);
     let dropped_signal = apply_dropout(
         in.uv,
-        conditioned.noise_coord,
+        seed.noise_coord,
         sample_luma(in.uv),
         sample_chroma(in.uv),
     );
     let noise = sample_output_noise(
-        conditioned.noise_coord,
+        seed.noise_coord,
         dropped_signal.x,
         dropped_signal.yz,
         dropped_signal.w,

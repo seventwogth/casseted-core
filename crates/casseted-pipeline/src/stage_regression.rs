@@ -141,7 +141,7 @@ impl StageReferenceCase {
             1.0 / REFERENCE_HEIGHT as f32,
             "frame.inv_height",
         );
-        assert_approx_eq(stages.reconstruction_output.frame_index, 0.0, "frame_index");
+        assert_approx_eq(stages.frame.frame_index, 0.0, "frame.frame_index");
 
         match self {
             Self::InputConditioningTone => {

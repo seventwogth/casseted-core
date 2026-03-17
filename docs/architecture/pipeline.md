@@ -49,6 +49,11 @@ The pipeline still owns a narrow projection bridge from the formal domain model 
 - `resolve_still_stages()`
 - `EffectUniforms`
 
+Stabilization note:
+
+- the shared frame block now carries the frame/procedural seed used by both input conditioning and reconstruction-side noise/dropout helpers, so `effect.reconstruction_output` stays focused on output-stage terms
+- model-backed preview overrides are merged per overridden term instead of re-normalizing untouched projected terms
+
 That bridge remains intentionally narrow. It does not introduce:
 
 - a render graph

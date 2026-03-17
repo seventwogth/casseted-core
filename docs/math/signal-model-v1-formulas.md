@@ -140,9 +140,12 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
 | `effect.reconstruction_output.xy` | noise amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges |
 | `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
-| `effect.reconstruction_output.w` | frame index from `FrameDescriptor.frame_index` |
+| `effect.frame.w` | shared frame / procedural seed from `FrameDescriptor.frame_index` |
 | `effect.reconstruction_aux.x` | model-driven dropout line probability clamped to `[0, 0.08]`; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.y` | model-driven dropout span proxy in pixels clamped to `[0, 48 * s_ref]`; manual preview path keeps it at `0` |
+
+Current packing note:
+the compact uniform block now uses `effect.frame = (W, H, 1 / W, f)`. The shaders derive `1 / H` from `H` so the frame index stays in the shared frame block instead of leaking into an output-stage-specific slot.
 
 ## 3. Input And Working Representation
 
@@ -567,10 +570,13 @@ Mapping:
 - formal source: `VhsTransportSettings.line_jitter_us`
 - formal source for \(\delta_V\): `VhsTransportSettings.vertical_wander_lines`
 - pipeline projection: `project_vhs_model_to_preview_signal()` converts \(\mu s \to\) reference pixels
-- shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.reconstruction_output.w`
+- shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.frame.w`
 
 Calibration note:
 the current still-image path keeps transport instability intentionally subordinate to tone shaping, luma softening, and chroma bandwidth loss. This avoids the decorative wobble / glitch-art failure mode that appeared when transport terms were weighted too aggressively relative to the signal-loss stages.
+
+Boundary note:
+the reconstruction pass reuses the same conditioned line phase only to derive procedural noise/dropout coordinates. It does not resample the already degraded luma/chroma textures through transport a second time.
 
 ### 5.2 Signal-Shaped Noise Contamination
 
@@ -943,6 +949,8 @@ Interpretation:
 - strong preview values are still allowed, but they stop scaling linearly into the glitch-prone region
 - chroma offset is intentionally coupled to a minimum chroma bandwidth-loss proxy so the image reads as chroma loss rather than RGB splitting
 - noise and transport terms remain secondary to tone shaping, luma softening, and chroma bandwidth loss
+- on model-backed pipelines, this normalization now applies only to overridden preview terms; untouched model-projected terms remain unchanged
+- if either chroma offset or chroma bandwidth-loss proxy is overridden, that pair is still normalized together so the guardrail can preserve the intended analog priority order
 
 ## 8. Explicitly Not Modeled At This Stage
 

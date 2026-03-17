@@ -21,6 +21,10 @@ fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(working_texture, working_sampler, clamped).rgb;
 }
 
+fn frame_inv_size() -> vec2<f32> {
+    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+}
+
 fn highlight_mask(value: f32, threshold: f32) -> f32 {
     let headroom = max(1e-5, 1.0 - threshold);
     return clamp((value - threshold) / headroom, 0.0, 1.0);
@@ -33,7 +37,7 @@ fn highlight_bleed(uv: vec2<f32>, base_luma: f32) -> f32 {
         return 0.0;
     }
 
-    let inv_size = effect.frame.zw;
+    let inv_size = frame_inv_size();
     let smear_step_px = max(0.85, effect.luma_degradation.x * 0.9 + 0.65);
     let smear_step = vec2<f32>(smear_step_px * inv_size.x, 0.0);
     let prev_near = sample_working_signal(uv - smear_step).x;
@@ -48,7 +52,7 @@ fn highlight_bleed(uv: vec2<f32>, base_luma: f32) -> f32 {
 }
 
 fn degrade_luma(uv: vec2<f32>) -> f32 {
-    let inv_size = effect.frame.zw;
+    let inv_size = frame_inv_size();
     let center = sample_working_signal(uv);
     let luma_offset = effect.luma_degradation.x * inv_size.x;
     let inner_step = vec2<f32>(luma_offset, 0.0);

@@ -261,7 +261,8 @@ Preview-specific guardrail rule:
 - manual preview controls are resolved through `effective_preview_signal()` before `resolve_still_stages()` packs uniforms
 - those guardrails only affect preview-facing `SignalSettings` terms
 - the formal `VhsModel` and its projection rules remain unchanged
-- if a model-projected pipeline later receives manual signal overrides, only the diverging preview terms are normalized
+- if a model-projected pipeline later receives manual signal overrides, only the diverging preview terms are normalized, while untouched projected terms stay at the model-projected values
+- coupled chroma override terms are still normalized together so offset-heavy overrides cannot collapse back into a digital color-split look
 
 Important constraint:
 this is a projection layer, not a graph engine and not a new runtime abstraction.
@@ -289,6 +290,7 @@ Secondary mappings that are still present but not the main focus of this phase:
 
 - `VhsTransportSettings.line_jitter_us` -> attenuated input-conditioning jitter proxy -> `effect.input_conditioning.z`
 - `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot -> `effect.input_conditioning.w`
+- `FrameDescriptor.frame_index` -> shared frame/procedural seed -> `effect.frame.w`, reused by input conditioning and reconstruction-side noise/dropout indexing without making reconstruction the owner of transport semantics
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction contamination amplitudes that the final pass reshapes into brightness-dependent luma noise and softer band-correlated chroma contamination -> `effect.reconstruction_output.xy`
 
 Current preview guardrails for manual / override-driven `SignalSettings`:
@@ -297,6 +299,7 @@ Current preview guardrails for manual / override-driven `SignalSettings`:
 - `chroma.offset_px` uses a signed soft cap and `chroma.bleed_px` gains a minimum bandwidth-loss floor tied to the effective offset
 - `noise.{luma_amount,chroma_amount}` use soft caps so noise does not jump ahead of tone and bandwidth loss
 - `tracking.vertical_offset_lines` also uses a signed soft cap so still-image transport wobble stays secondary
+- in model-backed pipelines, those guardrails now preserve untouched projected preview terms instead of re-normalizing the entire preview signal blob
 - these rules are intentionally preview-only and do not redefine the formal model
 
 ## Current Visual Calibration Priorities
@@ -335,6 +338,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
 - reconstruction back to RGB with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
+- the final pass reuses the transport-conditioned line phase only as a procedural seed for noise/dropout placement; it does not reapply transport resampling to luma/chroma textures
 
 Still deferred:
 
@@ -343,6 +347,7 @@ Still deferred:
 - temporal model
 - render-graph planning
 - video support
+- explicit API-level override tracking between public `model` and `signal` fields; direct caller mutation of `model` after construction still requires caller-managed reprojection if exact lockstep is needed
 
 ## Consequence
 

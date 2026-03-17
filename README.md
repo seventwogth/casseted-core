@@ -73,6 +73,7 @@ Agent stage log:
 - [`docs/agent-log/0002-chroma-path-refinement.md`](./docs/agent-log/0002-chroma-path-refinement.md)
 - [`docs/agent-log/0003-highlight-bleed-and-dropout.md`](./docs/agent-log/0003-highlight-bleed-and-dropout.md)
 - [`docs/agent-log/0004-noise-path-refinement.md`](./docs/agent-log/0004-noise-path-refinement.md)
+- [`docs/agent-log/0005-signal-chain-stabilization-review.md`](./docs/agent-log/0005-signal-chain-stabilization-review.md)
 
 ## CLI
 
