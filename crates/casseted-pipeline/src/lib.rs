@@ -396,73 +396,219 @@ fn dropout_span_px_from_time(dropout_mean_span_us: f32, reference_scale: f32) ->
 }
 
 fn effective_preview_signal(signal: SignalSettings, model: Option<VhsModel>) -> SignalSettings {
-    if uses_model_projected_preview_signal(signal, model) {
-        signal
-    } else {
-        normalize_manual_preview_signal(signal)
+    match model.map(project_vhs_model_to_preview_signal) {
+        Some(projected) if signal == projected => signal,
+        Some(projected) => normalize_preview_signal_overrides(signal, projected),
+        None => normalize_manual_preview_signal(signal),
     }
 }
 
-fn uses_model_projected_preview_signal(signal: SignalSettings, model: Option<VhsModel>) -> bool {
-    model
-        .map(project_vhs_model_to_preview_signal)
-        .is_some_and(|projected| signal == projected)
+fn normalize_manual_preview_signal(signal: SignalSettings) -> SignalSettings {
+    SignalSettings {
+        tone: normalize_preview_tone(signal.tone),
+        luma: normalize_preview_luma(signal.luma),
+        chroma: normalize_preview_chroma(signal.chroma),
+        noise: normalize_preview_noise(signal.noise),
+        tracking: normalize_preview_tracking(signal.tracking),
+    }
 }
 
-fn normalize_manual_preview_signal(signal: SignalSettings) -> SignalSettings {
-    let chroma_offset_px = soft_cap_signed(
-        signal.chroma.offset_px,
+fn normalize_preview_signal_overrides(
+    signal: SignalSettings,
+    projected: SignalSettings,
+) -> SignalSettings {
+    let tone = ToneSettings {
+        highlight_soft_knee: if signal.tone.highlight_soft_knee
+            == projected.tone.highlight_soft_knee
+        {
+            projected.tone.highlight_soft_knee
+        } else {
+            normalize_preview_tone(ToneSettings {
+                highlight_soft_knee: signal.tone.highlight_soft_knee,
+                highlight_compression: projected.tone.highlight_compression,
+            })
+            .highlight_soft_knee
+        },
+        highlight_compression: if signal.tone.highlight_compression
+            == projected.tone.highlight_compression
+        {
+            projected.tone.highlight_compression
+        } else {
+            normalize_preview_tone(ToneSettings {
+                highlight_soft_knee: projected.tone.highlight_soft_knee,
+                highlight_compression: signal.tone.highlight_compression,
+            })
+            .highlight_compression
+        },
+    };
+
+    let luma = if signal.luma == projected.luma {
+        projected.luma
+    } else {
+        normalize_preview_luma(signal.luma)
+    };
+
+    let chroma = if signal.chroma.offset_px != projected.chroma.offset_px
+        || signal.chroma.bleed_px != projected.chroma.bleed_px
+    {
+        let normalized = normalize_preview_chroma(ChromaSettings {
+            offset_px: if signal.chroma.offset_px == projected.chroma.offset_px {
+                projected.chroma.offset_px
+            } else {
+                signal.chroma.offset_px
+            },
+            bleed_px: if signal.chroma.bleed_px == projected.chroma.bleed_px {
+                projected.chroma.bleed_px
+            } else {
+                signal.chroma.bleed_px
+            },
+            saturation: projected.chroma.saturation,
+        });
+
+        ChromaSettings {
+            saturation: if signal.chroma.saturation == projected.chroma.saturation {
+                projected.chroma.saturation
+            } else {
+                normalize_preview_chroma(ChromaSettings {
+                    offset_px: projected.chroma.offset_px,
+                    bleed_px: projected.chroma.bleed_px,
+                    saturation: signal.chroma.saturation,
+                })
+                .saturation
+            },
+            ..normalized
+        }
+    } else if signal.chroma.saturation != projected.chroma.saturation {
+        ChromaSettings {
+            saturation: normalize_preview_chroma(ChromaSettings {
+                offset_px: projected.chroma.offset_px,
+                bleed_px: projected.chroma.bleed_px,
+                saturation: signal.chroma.saturation,
+            })
+            .saturation,
+            ..projected.chroma
+        }
+    } else {
+        projected.chroma
+    };
+
+    let noise = NoiseSettings {
+        luma_amount: if signal.noise.luma_amount == projected.noise.luma_amount {
+            projected.noise.luma_amount
+        } else {
+            normalize_preview_noise(NoiseSettings {
+                luma_amount: signal.noise.luma_amount,
+                chroma_amount: projected.noise.chroma_amount,
+            })
+            .luma_amount
+        },
+        chroma_amount: if signal.noise.chroma_amount == projected.noise.chroma_amount {
+            projected.noise.chroma_amount
+        } else {
+            normalize_preview_noise(NoiseSettings {
+                luma_amount: projected.noise.luma_amount,
+                chroma_amount: signal.noise.chroma_amount,
+            })
+            .chroma_amount
+        },
+    };
+
+    let tracking = TrackingSettings {
+        line_jitter_px: if signal.tracking.line_jitter_px == projected.tracking.line_jitter_px {
+            projected.tracking.line_jitter_px
+        } else {
+            normalize_preview_tracking(TrackingSettings {
+                line_jitter_px: signal.tracking.line_jitter_px,
+                vertical_offset_lines: projected.tracking.vertical_offset_lines,
+            })
+            .line_jitter_px
+        },
+        vertical_offset_lines: if signal.tracking.vertical_offset_lines
+            == projected.tracking.vertical_offset_lines
+        {
+            projected.tracking.vertical_offset_lines
+        } else {
+            normalize_preview_tracking(TrackingSettings {
+                line_jitter_px: projected.tracking.line_jitter_px,
+                vertical_offset_lines: signal.tracking.vertical_offset_lines,
+            })
+            .vertical_offset_lines
+        },
+    };
+
+    SignalSettings {
+        tone,
+        luma,
+        chroma,
+        noise,
+        tracking,
+    }
+}
+
+fn normalize_preview_tone(tone: ToneSettings) -> ToneSettings {
+    ToneSettings {
+        highlight_soft_knee: tone.highlight_soft_knee.clamp(0.0, 0.999),
+        highlight_compression: tone.highlight_compression.max(0.0),
+    }
+}
+
+fn normalize_preview_luma(luma: LumaSettings) -> LumaSettings {
+    LumaSettings {
+        blur_px: soft_cap_magnitude(
+            luma.blur_px,
+            PREVIEW_LUMA_BLUR_RECOMMENDED_CAP,
+            PREVIEW_LUMA_BLUR_HARD_CAP,
+        ),
+    }
+}
+
+fn normalize_preview_chroma(chroma: ChromaSettings) -> ChromaSettings {
+    let offset_px = soft_cap_signed(
+        chroma.offset_px,
         PREVIEW_CHROMA_OFFSET_RECOMMENDED_CAP,
         PREVIEW_CHROMA_OFFSET_HARD_CAP,
     );
-    let chroma_bleed_px = soft_cap_magnitude(
-        signal.chroma.bleed_px,
+    let bleed_px = soft_cap_magnitude(
+        chroma.bleed_px,
         PREVIEW_CHROMA_BLEED_RECOMMENDED_CAP,
         PREVIEW_CHROMA_BLEED_HARD_CAP,
     )
-    .max(chroma_offset_px.abs() * PREVIEW_CHROMA_BLEED_OFFSET_RATIO);
+    .max(offset_px.abs() * PREVIEW_CHROMA_BLEED_OFFSET_RATIO);
 
-    SignalSettings {
-        tone: ToneSettings {
-            highlight_soft_knee: signal.tone.highlight_soft_knee.clamp(0.0, 0.999),
-            highlight_compression: signal.tone.highlight_compression.max(0.0),
-        },
-        luma: LumaSettings {
-            blur_px: soft_cap_magnitude(
-                signal.luma.blur_px,
-                PREVIEW_LUMA_BLUR_RECOMMENDED_CAP,
-                PREVIEW_LUMA_BLUR_HARD_CAP,
-            ),
-        },
-        chroma: ChromaSettings {
-            offset_px: chroma_offset_px,
-            bleed_px: chroma_bleed_px,
-            saturation: signal.chroma.saturation.max(0.0),
-        },
-        noise: NoiseSettings {
-            luma_amount: soft_cap_magnitude(
-                signal.noise.luma_amount,
-                PREVIEW_LUMA_NOISE_RECOMMENDED_CAP,
-                PREVIEW_LUMA_NOISE_HARD_CAP,
-            ),
-            chroma_amount: soft_cap_magnitude(
-                signal.noise.chroma_amount,
-                PREVIEW_CHROMA_NOISE_RECOMMENDED_CAP,
-                PREVIEW_CHROMA_NOISE_HARD_CAP,
-            ),
-        },
-        tracking: TrackingSettings {
-            line_jitter_px: soft_cap_magnitude(
-                signal.tracking.line_jitter_px.abs(),
-                PREVIEW_LINE_JITTER_RECOMMENDED_CAP,
-                PREVIEW_LINE_JITTER_HARD_CAP,
-            ),
-            vertical_offset_lines: soft_cap_signed(
-                signal.tracking.vertical_offset_lines,
-                PREVIEW_VERTICAL_OFFSET_RECOMMENDED_CAP,
-                PREVIEW_VERTICAL_OFFSET_HARD_CAP,
-            ),
-        },
+    ChromaSettings {
+        offset_px,
+        bleed_px,
+        saturation: chroma.saturation.max(0.0),
+    }
+}
+
+fn normalize_preview_noise(noise: NoiseSettings) -> NoiseSettings {
+    NoiseSettings {
+        luma_amount: soft_cap_magnitude(
+            noise.luma_amount,
+            PREVIEW_LUMA_NOISE_RECOMMENDED_CAP,
+            PREVIEW_LUMA_NOISE_HARD_CAP,
+        ),
+        chroma_amount: soft_cap_magnitude(
+            noise.chroma_amount,
+            PREVIEW_CHROMA_NOISE_RECOMMENDED_CAP,
+            PREVIEW_CHROMA_NOISE_HARD_CAP,
+        ),
+    }
+}
+
+fn normalize_preview_tracking(tracking: TrackingSettings) -> TrackingSettings {
+    TrackingSettings {
+        line_jitter_px: soft_cap_magnitude(
+            tracking.line_jitter_px.abs(),
+            PREVIEW_LINE_JITTER_RECOMMENDED_CAP,
+            PREVIEW_LINE_JITTER_HARD_CAP,
+        ),
+        vertical_offset_lines: soft_cap_signed(
+            tracking.vertical_offset_lines,
+            PREVIEW_VERTICAL_OFFSET_RECOMMENDED_CAP,
+            PREVIEW_VERTICAL_OFFSET_HARD_CAP,
+        ),
     }
 }
 
@@ -833,6 +979,7 @@ struct FrameStage {
     height: f32,
     inv_width: f32,
     inv_height: f32,
+    frame_index: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -866,7 +1013,6 @@ struct ReconstructionOutputStage {
     luma_noise_amount: f32,
     chroma_noise_amount: f32,
     luma_chroma_crosstalk: f32,
-    frame_index: f32,
     dropout_line_probability: f32,
     dropout_span_px: f32,
 }
@@ -888,7 +1034,7 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 stages.frame.width,
                 stages.frame.height,
                 stages.frame.inv_width,
-                stages.frame.inv_height,
+                stages.frame.frame_index,
             ],
             input_conditioning: [
                 stages.input_conditioning.highlight_soft_knee,
@@ -912,7 +1058,7 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 stages.reconstruction_output.luma_noise_amount,
                 stages.reconstruction_output.chroma_noise_amount,
                 stages.reconstruction_output.luma_chroma_crosstalk,
-                stages.reconstruction_output.frame_index,
+                0.0,
             ],
             reconstruction_aux: [
                 stages.reconstruction_output.dropout_line_probability,
@@ -979,6 +1125,7 @@ fn resolve_still_stages(
             height,
             inv_width: width.recip(),
             inv_height: height.recip(),
+            frame_index: input.descriptor.frame_index as f32,
         },
         input_conditioning: resolve_input_conditioning_stage(signal, reference_scale),
         luma_degradation: resolve_luma_degradation_stage(signal, reference_scale, model),
@@ -1061,7 +1208,6 @@ fn resolve_reconstruction_output_stage(
         luma_noise_amount: signal.noise.luma_amount.max(0.0),
         chroma_noise_amount: signal.noise.chroma_amount.max(0.0),
         luma_chroma_crosstalk,
-        frame_index: input.descriptor.frame_index as f32,
         dropout_line_probability,
         dropout_span_px,
     }
@@ -1174,6 +1320,7 @@ mod tests {
         let pipeline = StillImagePipeline::default();
         let uniforms = effect_uniforms(&input, pipeline.signal, pipeline.model);
 
+        assert_eq!(uniforms.frame[3], 0.0);
         assert!((uniforms.input_conditioning[0] - 0.64).abs() < 1e-6);
         assert!((uniforms.luma_degradation[1] - 0.045).abs() < 1e-6);
         assert!((uniforms.luma_degradation[2] - 0.76).abs() < 1e-6);
@@ -1247,6 +1394,25 @@ mod tests {
             (stages.reconstruction_output.luma_noise_amount - effective.noise.luma_amount).abs()
                 < 1e-6
         );
+    }
+
+    #[test]
+    fn model_override_guardrails_do_not_rewrite_untouched_projected_terms() {
+        let mut model = VhsModel::default();
+        model.tone.highlight_soft_knee = 1.0;
+        model.tone.highlight_compression = 0.0;
+        model.transport.vertical_wander_lines = 0.05;
+        let mut pipeline = StillImagePipeline::from_vhs_model(model);
+        pipeline.signal.chroma.offset_px = 2.0;
+        pipeline.signal.chroma.bleed_px = 0.0;
+
+        let effective = pipeline.effective_preview_signal();
+
+        assert_eq!(effective.tone.highlight_soft_knee, 1.0);
+        assert_eq!(effective.tone.highlight_compression, 0.0);
+        assert_eq!(effective.tracking.vertical_offset_lines, 0.05);
+        assert!(effective.chroma.offset_px < 0.60);
+        assert!(effective.chroma.bleed_px >= effective.chroma.offset_px.abs() * 2.5);
     }
 
     #[test]

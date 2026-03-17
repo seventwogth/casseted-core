@@ -30,6 +30,10 @@ fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(input_texture, input_sampler, clamped).rgb;
 }
 
+fn frame_inv_size() -> vec2<f32> {
+    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+}
+
 fn soft_highlight_knee(value: f32, knee: f32, compression: f32) -> f32 {
     if (compression <= 0.0 || value <= knee || knee >= 0.999) {
         return value;
@@ -58,9 +62,9 @@ fn apply_tone_shaping(rgb: vec3<f32>) -> vec3<f32> {
 
 fn conditioned_sample_uv(uv: vec2<f32>) -> vec2<f32> {
     let frame_size = effect.frame.xy;
-    let inv_size = effect.frame.zw;
+    let inv_size = frame_inv_size();
     let line_index = floor(uv.y * frame_size.y + effect.input_conditioning.w);
-    let line_phase = line_index + effect.reconstruction_output.w * 0.5;
+    let line_phase = line_index + effect.frame.w * 0.5;
     let line_jitter = sin(line_phase * 0.37) * effect.input_conditioning.z * inv_size.x;
     return vec2<f32>(
         uv.x + line_jitter,

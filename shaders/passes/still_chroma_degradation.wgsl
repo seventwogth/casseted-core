@@ -21,10 +21,14 @@ fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(working_texture, working_sampler, clamped).rgb;
 }
 
+fn frame_inv_size() -> vec2<f32> {
+    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+}
+
 fn sample_chroma_px(pixel_pos: vec2<f32>) -> vec2<f32> {
     let frame_size = effect.frame.xy;
     let clamped = clamp(pixel_pos, vec2<f32>(0.0), frame_size - vec2<f32>(1.0, 1.0));
-    let uv = (clamped + vec2<f32>(0.5, 0.5)) * effect.frame.zw;
+    let uv = (clamped + vec2<f32>(0.5, 0.5)) * frame_inv_size();
     return sample_working_signal(uv).yz;
 }
 
