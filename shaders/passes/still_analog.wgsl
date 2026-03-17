@@ -109,12 +109,12 @@ fn degrade_luma(sample_uv: vec2<f32>) -> f32 {
     let left_inner = sample_working_signal(sample_uv - inner_step);
     let right_inner = sample_working_signal(sample_uv + inner_step);
     let right_outer = sample_working_signal(sample_uv + outer_step);
-    let blurred_luma = left_outer.x * 0.12
-        + left_inner.x * 0.23
-        + center.x * 0.30
-        + right_inner.x * 0.23
-        + right_outer.x * 0.12;
-    let edge_band = left_inner.x * 0.2 + center.x * 0.6 + right_inner.x * 0.2;
+    let blurred_luma = left_outer.x * 0.15
+        + left_inner.x * 0.22
+        + center.x * 0.26
+        + right_inner.x * 0.22
+        + right_outer.x * 0.15;
+    let edge_band = left_inner.x * 0.25 + center.x * 0.5 + right_inner.x * 0.25;
     return clamp(
         blurred_luma + (center.x - edge_band) * effect.luma_degradation.y,
         0.0,
@@ -126,17 +126,22 @@ fn degrade_chroma(sample_uv: vec2<f32>) -> vec2<f32> {
     let inv_size = effect.frame.zw;
     let chroma_offset = effect.chroma_degradation.x * inv_size.x;
     let chroma_blur = effect.chroma_degradation.y * inv_size.x;
-    let chroma_center = sample_working_signal(sample_uv + vec2<f32>(chroma_offset, 0.0));
-    let chroma_left = sample_working_signal(
-        sample_uv + vec2<f32>(chroma_offset - chroma_blur, 0.0),
-    );
-    let chroma_right = sample_working_signal(
-        sample_uv + vec2<f32>(chroma_offset + chroma_blur, 0.0),
-    );
-    let chroma_horizontal = chroma_left.yz * 0.25 + chroma_center.yz * 0.5 + chroma_right.yz * 0.25;
-    let chroma_up = sample_working_signal(sample_uv + vec2<f32>(chroma_offset, -inv_size.y)).yz;
-    let chroma_down = sample_working_signal(sample_uv + vec2<f32>(chroma_offset, inv_size.y)).yz;
-    let chroma_vertical = (chroma_up + chroma_horizontal * 2.0 + chroma_down) * 0.25;
+    let chroma_center_uv = sample_uv + vec2<f32>(chroma_offset, 0.0);
+    let inner_step = vec2<f32>(chroma_blur, 0.0);
+    let outer_step = vec2<f32>(chroma_blur * 2.0, 0.0);
+    let chroma_left_outer = sample_working_signal(chroma_center_uv - outer_step).yz;
+    let chroma_left_inner = sample_working_signal(chroma_center_uv - inner_step).yz;
+    let chroma_center = sample_working_signal(chroma_center_uv).yz;
+    let chroma_right_inner = sample_working_signal(chroma_center_uv + inner_step).yz;
+    let chroma_right_outer = sample_working_signal(chroma_center_uv + outer_step).yz;
+    let chroma_horizontal = chroma_left_outer * 0.14
+        + chroma_left_inner * 0.22
+        + chroma_center * 0.28
+        + chroma_right_inner * 0.22
+        + chroma_right_outer * 0.14;
+    let chroma_up = sample_working_signal(chroma_center_uv - vec2<f32>(0.0, inv_size.y)).yz;
+    let chroma_down = sample_working_signal(chroma_center_uv + vec2<f32>(0.0, inv_size.y)).yz;
+    let chroma_vertical = (chroma_up + chroma_horizontal * 3.0 + chroma_down) * 0.2;
     return mix(
         chroma_horizontal,
         chroma_vertical,
@@ -170,15 +175,19 @@ fn reconstruct_output(luma_signal: f32, chroma_signal: vec2<f32>, noise: vec2<f3
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
     var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -3.0),
-        vec2<f32>(-1.0, 1.0),
-        vec2<f32>(3.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
     );
 
     var output: VsOutput;
-    let xy = positions[vertex_index];
-    output.position = vec4<f32>(xy, 0.0, 1.0);
-    output.uv = xy * 0.5 + vec2<f32>(0.5, 0.5);
+    output.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    output.uv = uvs[vertex_index];
     return output;
 }
 

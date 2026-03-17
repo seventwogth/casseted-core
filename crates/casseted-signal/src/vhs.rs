@@ -131,8 +131,8 @@ impl VhsModel {
                 temporal_sampling: TemporalSampling::ProgressiveFrame,
             },
             tone: VhsToneSettings {
-                highlight_soft_knee: 0.72,
-                highlight_compression: 0.35,
+                highlight_soft_knee: 0.64,
+                highlight_compression: 0.55,
             },
             luma: VhsLumaSettings {
                 bandwidth_mhz: 3.0,
@@ -140,26 +140,26 @@ impl VhsModel {
             },
             chroma: VhsChromaSettings {
                 bandwidth_khz: 300.0,
-                saturation_gain: 1.0,
-                delay_us: 0.12,
+                saturation_gain: 0.94,
+                delay_us: 0.06,
                 phase_error_deg: 0.0,
             },
             transport: VhsTransportSettings {
-                line_jitter_us: 0.10,
-                vertical_wander_lines: 0.15,
+                line_jitter_us: 0.04,
+                vertical_wander_lines: 0.05,
                 head_switching_band_lines: 6,
                 head_switching_offset_us: 1.5,
             },
             noise: VhsNoiseSettings {
-                luma_sigma: 0.015,
-                chroma_sigma: 0.020,
+                luma_sigma: 0.012,
+                chroma_sigma: 0.016,
                 chroma_phase_noise_deg: 1.5,
                 dropout_probability_per_line: 0.002,
                 dropout_mean_span_us: 1.5,
             },
             decode: VhsDecodeSettings {
-                chroma_vertical_blend: 0.25,
-                luma_chroma_crosstalk: 0.05,
+                chroma_vertical_blend: 0.35,
+                luma_chroma_crosstalk: 0.02,
                 output_transfer: OutputTransfer::Srgb,
             },
         }
@@ -174,35 +174,35 @@ impl VhsModel {
                 temporal_sampling: TemporalSampling::ProgressiveFrame,
             },
             tone: VhsToneSettings {
-                highlight_soft_knee: 0.74,
-                highlight_compression: 0.30,
+                highlight_soft_knee: 0.66,
+                highlight_compression: 0.50,
             },
             luma: VhsLumaSettings {
                 bandwidth_mhz: 3.0,
                 preemphasis_db: 3.0,
             },
             chroma: VhsChromaSettings {
-                bandwidth_khz: 400.0,
-                saturation_gain: 1.0,
-                delay_us: 0.10,
+                bandwidth_khz: 350.0,
+                saturation_gain: 0.95,
+                delay_us: 0.05,
                 phase_error_deg: 0.0,
             },
             transport: VhsTransportSettings {
-                line_jitter_us: 0.10,
-                vertical_wander_lines: 0.15,
+                line_jitter_us: 0.04,
+                vertical_wander_lines: 0.05,
                 head_switching_band_lines: 8,
                 head_switching_offset_us: 1.2,
             },
             noise: VhsNoiseSettings {
-                luma_sigma: 0.015,
-                chroma_sigma: 0.018,
+                luma_sigma: 0.012,
+                chroma_sigma: 0.015,
                 chroma_phase_noise_deg: 1.0,
                 dropout_probability_per_line: 0.002,
                 dropout_mean_span_us: 1.5,
             },
             decode: VhsDecodeSettings {
-                chroma_vertical_blend: 0.30,
-                luma_chroma_crosstalk: 0.04,
+                chroma_vertical_blend: 0.38,
+                luma_chroma_crosstalk: 0.02,
                 output_transfer: OutputTransfer::Srgb,
             },
         }
@@ -314,7 +314,7 @@ mod tests {
             model.input.temporal_sampling,
             TemporalSampling::ProgressiveFrame
         );
-        assert_eq!(model.tone.highlight_soft_knee, 0.72);
+        assert_eq!(model.tone.highlight_soft_knee, 0.64);
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
         let model = VhsModel::pal_v1();
 
         assert_eq!(model.standard, VideoStandard::Pal);
-        assert_eq!(model.chroma.bandwidth_khz, 400.0);
+        assert_eq!(model.chroma.bandwidth_khz, 350.0);
         assert_eq!(model.transport.head_switching_band_lines, 8);
     }
 

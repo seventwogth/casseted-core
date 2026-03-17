@@ -87,6 +87,7 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
+- the current single-pass calibration emphasizes tone shoulder, luma softness, and chroma bandwidth loss ahead of jitter-heavy distortion
 
 ## Testing
 

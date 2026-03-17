@@ -65,12 +65,12 @@ impl StageReferenceCase {
         match self {
             Self::InputConditioningTone => StillImagePipeline::new(SignalSettings {
                 tone: ToneSettings {
-                    highlight_soft_knee: 0.68,
-                    highlight_compression: 0.55,
+                    highlight_soft_knee: 0.64,
+                    highlight_compression: 0.62,
                 },
                 tracking: TrackingSettings {
-                    line_jitter_px: 1.10,
-                    vertical_offset_lines: 0.75,
+                    line_jitter_px: 0.35,
+                    vertical_offset_lines: 0.25,
                 },
                 ..SignalSettings::neutral()
             }),
@@ -84,16 +84,16 @@ impl StageReferenceCase {
             Self::ChromaDegradation => {
                 let mut model = neutral_reference_model();
                 model.chroma.bandwidth_khz = 300.0;
-                model.chroma.saturation_gain = 0.92;
-                model.chroma.delay_us = 0.12;
-                model.decode.chroma_vertical_blend = 0.25;
+                model.chroma.saturation_gain = 0.94;
+                model.chroma.delay_us = 0.08;
+                model.decode.chroma_vertical_blend = 0.35;
                 StillImagePipeline::from_vhs_model(model)
             }
             Self::ReconstructionOutput => {
                 let mut model = neutral_reference_model();
-                model.noise.luma_sigma = 0.024;
-                model.noise.chroma_sigma = 0.030;
-                model.decode.luma_chroma_crosstalk = 0.08;
+                model.noise.luma_sigma = 0.018;
+                model.noise.chroma_sigma = 0.022;
+                model.decode.luma_chroma_crosstalk = 0.04;
                 StillImagePipeline::from_vhs_model(model)
             }
         }
@@ -102,8 +102,8 @@ impl StageReferenceCase {
     fn perturb(self, pipeline: &mut StillImagePipeline) -> bool {
         match self {
             Self::InputConditioningTone => {
-                pipeline.signal.tone.highlight_soft_knee = 0.64;
-                pipeline.signal.tone.highlight_compression = 0.62;
+                pipeline.signal.tone.highlight_soft_knee = 0.60;
+                pipeline.signal.tone.highlight_compression = 0.68;
                 true
             }
             Self::LumaChromaTransform => false,
@@ -143,22 +143,22 @@ impl StageReferenceCase {
             Self::InputConditioningTone => {
                 assert_approx_eq(
                     stages.input_conditioning.highlight_soft_knee,
-                    0.68,
+                    0.64,
                     "input_conditioning.highlight_soft_knee",
                 );
                 assert_approx_eq(
                     stages.input_conditioning.highlight_compression,
-                    0.55,
+                    0.62,
                     "input_conditioning.highlight_compression",
                 );
                 assert_approx_eq(
                     stages.input_conditioning.line_jitter_px,
-                    1.10 * REFERENCE_SCALE,
+                    0.35 * REFERENCE_SCALE,
                     "input_conditioning.line_jitter_px",
                 );
                 assert_approx_eq(
                     stages.input_conditioning.vertical_offset_lines,
-                    0.75,
+                    0.25,
                     "input_conditioning.vertical_offset_lines",
                 );
                 assert_approx_eq(
@@ -272,12 +272,12 @@ impl StageReferenceCase {
                 );
                 assert_approx_eq(
                     stages.luma_degradation.blur_px,
-                    1.25 * REFERENCE_SCALE,
+                    1.92 * REFERENCE_SCALE,
                     "luma_degradation.blur_px",
                 );
                 assert_approx_eq(
                     stages.luma_degradation.detail_mix,
-                    0.075,
+                    0.045,
                     "luma_degradation.detail_mix",
                 );
                 assert_approx_eq(
@@ -294,22 +294,22 @@ impl StageReferenceCase {
             Self::ChromaDegradation => {
                 assert_approx_eq(
                     stages.chroma_degradation.offset_px,
-                    1.62 * REFERENCE_SCALE,
+                    0.432 * REFERENCE_SCALE,
                     "chroma_degradation.offset_px",
                 );
                 assert_approx_eq(
                     stages.chroma_degradation.blur_px,
-                    1.75 * REFERENCE_SCALE,
+                    (7.0 / 3.0) * REFERENCE_SCALE,
                     "chroma_degradation.blur_px",
                 );
                 assert_approx_eq(
                     stages.chroma_degradation.saturation,
-                    0.92,
+                    0.94,
                     "chroma_degradation.saturation",
                 );
                 assert_approx_eq(
                     stages.chroma_degradation.vertical_blend,
-                    0.25,
+                    0.35,
                     "chroma_degradation.vertical_blend",
                 );
                 assert_approx_eq(
@@ -326,17 +326,17 @@ impl StageReferenceCase {
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.luma_noise_amount,
-                    0.03,
+                    0.018,
                     "reconstruction_output.luma_noise_amount",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.chroma_noise_amount,
-                    0.015,
+                    0.0077,
                     "reconstruction_output.chroma_noise_amount",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.luma_chroma_crosstalk,
-                    0.08,
+                    0.04,
                     "reconstruction_output.luma_chroma_crosstalk",
                 );
             }
