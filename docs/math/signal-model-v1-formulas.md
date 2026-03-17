@@ -116,15 +116,15 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | --- | --- |
 | `effect.input_conditioning.x` | `highlight_soft_knee` clamped to `[0, 0.999]` |
 | `effect.input_conditioning.y` | `highlight_compression >= 0` |
-| `effect.input_conditioning.z` | model-projected line jitter is non-negative and intentionally attenuated in the still path; current manual preview path passes the supplied amplitude through |
-| `effect.input_conditioning.w` | vertical offset snapshot is signed and currently unbounded in the preview path |
-| `effect.luma_degradation.x` | resolved blur radius `>= 0` |
+| `effect.input_conditioning.z` | model-projected line jitter is non-negative and intentionally attenuated in the still path; manual preview values are further soft-capped into an effective range |
+| `effect.input_conditioning.w` | vertical offset snapshot is signed; manual preview values are soft-capped into an effective range |
+| `effect.luma_degradation.x` | resolved blur radius `>= 0`; manual preview values are softly capped at high magnitudes |
 | `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.12]` |
-| `effect.chroma_degradation.x` | current model projection is non-negative and intentionally attenuated relative to blur; manual preview path may supply signed offsets |
-| `effect.chroma_degradation.y` | resolved blur radius `>= 0` |
+| `effect.chroma_degradation.x` | current model projection is non-negative and intentionally attenuated relative to blur; manual preview values use a signed soft cap |
+| `effect.chroma_degradation.y` | resolved blur radius `>= 0`; manual preview values are softly capped and also floored against the effective chroma offset |
 | `effect.chroma_degradation.z` | saturation gain `>= 0` |
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
-| `effect.reconstruction_output.xy` | noise amplitudes `>= 0` |
+| `effect.reconstruction_output.xy` | noise amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges |
 | `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
 | `effect.reconstruction_output.w` | frame index from `FrameDescriptor.frame_index` |
 
@@ -585,6 +585,62 @@ Important runtime note:
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the fused pass reads as technical analog degradation rather than glitch-oriented distortion art.
+
+### 7.1 Preview/manual guardrails
+
+The still pipeline applies an additional preview-only normalization layer to manual `SignalSettings` before stage resolution.
+
+This layer does not modify the formal `VhsModel`. It only converts raw manual preview inputs into effective applied values when a manual path or manual override path diverges from the model projection.
+
+For a non-negative preview control \(x\), the current soft-cap function is:
+
+\[
+G(x; r, h) =
+\begin{cases}
+\max(0, x), & x \le r \\
+r + \frac{(x - r)(h - r)}{(x - r) + (h - r)}, & x > r
+\end{cases}
+\]
+
+where \(r\) is the recommended cap and \(h\) is the asymptotic hard cap.
+
+For signed controls, the still path uses:
+
+\[
+G_{\pm}(x; r, h) = \operatorname{sign}(x)\, G(|x|; r, h)
+\]
+
+Current effective preview rules:
+
+\[
+p_{Y,\mathrm{eff}} = G(p_Y; 3.25, 4.75)
+\]
+
+\[
+p_{\tau,\mathrm{eff}} = G_{\pm}(p_\tau; 0.35, 0.60)
+\]
+
+\[
+p_{C,\mathrm{eff}} = \max\left(G(p_C; 3.0, 4.25),\; 2.5|p_{\tau,\mathrm{eff}}|\right)
+\]
+
+\[
+a_{Y,\mathrm{eff}} = G(a_Y; 0.02, 0.04)
+\qquad
+a_{C,\mathrm{eff}} = G(a_C; 0.012, 0.025)
+\]
+
+\[
+p_{J,\mathrm{eff}} = G(|p_J|; 0.35, 0.55)
+\qquad
+\delta_{V,\mathrm{eff}} = G_{\pm}(\delta_V; 0.35, 0.75)
+\]
+
+Interpretation:
+
+- strong preview values are still allowed, but they stop scaling linearly into the glitch-prone region
+- chroma offset is intentionally coupled to a minimum chroma blur so the image reads as chroma loss rather than RGB splitting
+- noise and transport terms remain secondary to tone shaping, luma softening, and chroma bandwidth loss
 
 ## 8. Explicitly Not Modeled At This Stage
 

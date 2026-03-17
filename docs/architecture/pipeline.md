@@ -40,6 +40,7 @@ The pipeline owns a narrow projection bridge from the formal domain model into t
 
 - `StillImagePipeline::from_vhs_model()`
 - `project_vhs_model_to_preview_signal()`
+- `effective_preview_signal()`
 - `resolve_still_stages()`
 - `EffectUniforms`
 

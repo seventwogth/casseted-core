@@ -18,6 +18,21 @@ const STILL_JITTER_ATTENUATION: f32 = 0.22;
 const STILL_CHROMA_DELAY_ATTENUATION: f32 = 0.4;
 const REFERENCE_LUMA_BANDWIDTH_MHZ: f32 = 4.2;
 const REFERENCE_CHROMA_BANDWIDTH_KHZ: f32 = 1000.0;
+const PREVIEW_LUMA_BLUR_RECOMMENDED_CAP: f32 = 3.25;
+const PREVIEW_LUMA_BLUR_HARD_CAP: f32 = 4.75;
+const PREVIEW_CHROMA_OFFSET_RECOMMENDED_CAP: f32 = 0.35;
+const PREVIEW_CHROMA_OFFSET_HARD_CAP: f32 = 0.60;
+const PREVIEW_CHROMA_BLEED_RECOMMENDED_CAP: f32 = 3.0;
+const PREVIEW_CHROMA_BLEED_HARD_CAP: f32 = 4.25;
+const PREVIEW_CHROMA_BLEED_OFFSET_RATIO: f32 = 2.5;
+const PREVIEW_LUMA_NOISE_RECOMMENDED_CAP: f32 = 0.02;
+const PREVIEW_LUMA_NOISE_HARD_CAP: f32 = 0.04;
+const PREVIEW_CHROMA_NOISE_RECOMMENDED_CAP: f32 = 0.012;
+const PREVIEW_CHROMA_NOISE_HARD_CAP: f32 = 0.025;
+const PREVIEW_LINE_JITTER_RECOMMENDED_CAP: f32 = 0.35;
+const PREVIEW_LINE_JITTER_HARD_CAP: f32 = 0.55;
+const PREVIEW_VERTICAL_OFFSET_RECOMMENDED_CAP: f32 = 0.35;
+const PREVIEW_VERTICAL_OFFSET_HARD_CAP: f32 = 0.75;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StillImagePipeline {
@@ -41,6 +56,10 @@ impl StillImagePipeline {
             signal: project_vhs_model_to_preview_signal(model),
             shader_id: ShaderId::StillAnalog,
         }
+    }
+
+    pub fn effective_preview_signal(&self) -> SignalSettings {
+        effective_preview_signal(self.signal, self.model)
     }
 
     pub fn process_blocking(&self, input: &ImageFrame) -> Result<ImageFrame, PipelineError> {
@@ -75,7 +94,8 @@ impl StillImagePipeline {
             ..wgpu::SamplerDescriptor::default()
         });
 
-        let uniform_bytes = effect_uniform_bytes(input, self.signal, self.model);
+        let uniform_bytes =
+            effect_uniform_bytes(input, self.effective_preview_signal(), self.model);
         let uniform_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("casseted-still-image-uniforms"),
             size: uniform_bytes.len() as u64,
@@ -347,6 +367,92 @@ fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
     (preemphasis_db.max(0.0) * 0.015).min(0.12)
 }
 
+fn effective_preview_signal(signal: SignalSettings, model: Option<VhsModel>) -> SignalSettings {
+    if uses_model_projected_preview_signal(signal, model) {
+        signal
+    } else {
+        normalize_manual_preview_signal(signal)
+    }
+}
+
+fn uses_model_projected_preview_signal(signal: SignalSettings, model: Option<VhsModel>) -> bool {
+    model
+        .map(project_vhs_model_to_preview_signal)
+        .is_some_and(|projected| signal == projected)
+}
+
+fn normalize_manual_preview_signal(signal: SignalSettings) -> SignalSettings {
+    let chroma_offset_px = soft_cap_signed(
+        signal.chroma.offset_px,
+        PREVIEW_CHROMA_OFFSET_RECOMMENDED_CAP,
+        PREVIEW_CHROMA_OFFSET_HARD_CAP,
+    );
+    let chroma_bleed_px = soft_cap_magnitude(
+        signal.chroma.bleed_px,
+        PREVIEW_CHROMA_BLEED_RECOMMENDED_CAP,
+        PREVIEW_CHROMA_BLEED_HARD_CAP,
+    )
+    .max(chroma_offset_px.abs() * PREVIEW_CHROMA_BLEED_OFFSET_RATIO);
+
+    SignalSettings {
+        tone: ToneSettings {
+            highlight_soft_knee: signal.tone.highlight_soft_knee.clamp(0.0, 0.999),
+            highlight_compression: signal.tone.highlight_compression.max(0.0),
+        },
+        luma: LumaSettings {
+            blur_px: soft_cap_magnitude(
+                signal.luma.blur_px,
+                PREVIEW_LUMA_BLUR_RECOMMENDED_CAP,
+                PREVIEW_LUMA_BLUR_HARD_CAP,
+            ),
+        },
+        chroma: ChromaSettings {
+            offset_px: chroma_offset_px,
+            bleed_px: chroma_bleed_px,
+            saturation: signal.chroma.saturation.max(0.0),
+        },
+        noise: NoiseSettings {
+            luma_amount: soft_cap_magnitude(
+                signal.noise.luma_amount,
+                PREVIEW_LUMA_NOISE_RECOMMENDED_CAP,
+                PREVIEW_LUMA_NOISE_HARD_CAP,
+            ),
+            chroma_amount: soft_cap_magnitude(
+                signal.noise.chroma_amount,
+                PREVIEW_CHROMA_NOISE_RECOMMENDED_CAP,
+                PREVIEW_CHROMA_NOISE_HARD_CAP,
+            ),
+        },
+        tracking: TrackingSettings {
+            line_jitter_px: soft_cap_magnitude(
+                signal.tracking.line_jitter_px.abs(),
+                PREVIEW_LINE_JITTER_RECOMMENDED_CAP,
+                PREVIEW_LINE_JITTER_HARD_CAP,
+            ),
+            vertical_offset_lines: soft_cap_signed(
+                signal.tracking.vertical_offset_lines,
+                PREVIEW_VERTICAL_OFFSET_RECOMMENDED_CAP,
+                PREVIEW_VERTICAL_OFFSET_HARD_CAP,
+            ),
+        },
+    }
+}
+
+fn soft_cap_magnitude(value: f32, recommended_cap: f32, hard_cap: f32) -> f32 {
+    let magnitude = value.max(0.0);
+    if magnitude <= recommended_cap {
+        return magnitude;
+    }
+
+    let span = (hard_cap - recommended_cap).max(f32::EPSILON);
+    let excess = magnitude - recommended_cap;
+    recommended_cap + (excess * span) / (excess + span)
+}
+
+fn soft_cap_signed(value: f32, recommended_cap: f32, hard_cap: f32) -> f32 {
+    value.signum() * soft_cap_magnitude(value.abs(), recommended_cap, hard_cap)
+}
+
 fn validate_input_image(input: &ImageFrame) -> Result<(), PipelineError> {
     if input.descriptor.size.is_empty() {
         return Err(PipelineError::EmptyFrame);
@@ -570,6 +676,7 @@ fn resolve_still_stages(
     signal: SignalSettings,
     model: Option<VhsModel>,
 ) -> ResolvedStillStages {
+    let signal = effective_preview_signal(signal, model);
     let width = input.descriptor.size.width as f32;
     let height = input.descriptor.size.height as f32;
     let reference_scale = (width / REFERENCE_WIDTH_PX).max(0.0);
@@ -675,7 +782,9 @@ mod tests {
         resolve_still_stages,
     };
     use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
-    use casseted_signal::{SignalSettings, VhsModel};
+    use casseted_signal::{
+        ChromaSettings, NoiseSettings, SignalSettings, TrackingSettings, VhsModel,
+    };
     use casseted_testing::{assert_images_not_identical, gradient_rgba8_image};
     use casseted_types::FrameSize;
 
@@ -734,6 +843,71 @@ mod tests {
         assert!((uniforms.luma_degradation[1] - 0.045).abs() < 1e-6);
         assert!((uniforms.chroma_degradation[3] - 0.35).abs() < 1e-6);
         assert!((uniforms.reconstruction_output[2] - 0.02).abs() < 1e-6);
+    }
+
+    #[test]
+    fn manual_preview_guardrails_soft_limit_glitch_prone_controls() {
+        let input = gradient_rgba8_image(FrameSize::new(720, 480));
+        let pipeline = StillImagePipeline::new(SignalSettings {
+            luma: super::LumaSettings { blur_px: 9.0 },
+            chroma: ChromaSettings {
+                offset_px: -3.0,
+                bleed_px: 0.1,
+                saturation: 1.0,
+            },
+            noise: NoiseSettings {
+                luma_amount: 0.25,
+                chroma_amount: 0.20,
+            },
+            tracking: TrackingSettings {
+                line_jitter_px: -4.0,
+                vertical_offset_lines: 2.0,
+            },
+            ..SignalSettings::neutral()
+        });
+
+        let effective = pipeline.effective_preview_signal();
+        let stages = resolve_still_stages(&input, pipeline.signal, pipeline.model);
+
+        assert!(effective.luma.blur_px > 3.25);
+        assert!(effective.luma.blur_px < 4.75);
+        assert!(effective.chroma.offset_px < 0.0);
+        assert!(effective.chroma.offset_px.abs() < 0.60);
+        assert!(effective.chroma.bleed_px >= effective.chroma.offset_px.abs() * 2.5);
+        assert!(effective.noise.luma_amount < 0.04);
+        assert!(effective.noise.chroma_amount < 0.025);
+        assert!(effective.tracking.line_jitter_px < 0.55);
+        assert!(effective.tracking.vertical_offset_lines.abs() < 0.75);
+        assert!((stages.chroma_degradation.offset_px - effective.chroma.offset_px).abs() < 1e-6);
+        assert!(
+            (stages.input_conditioning.line_jitter_px - effective.tracking.line_jitter_px).abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn model_path_applies_guardrails_when_preview_overrides_diverge_from_projection() {
+        let input = gradient_rgba8_image(FrameSize::new(720, 480));
+        let mut pipeline = StillImagePipeline::default();
+        pipeline.signal.chroma.offset_px = 2.0;
+        pipeline.signal.chroma.bleed_px = 0.0;
+        pipeline.signal.noise.luma_amount = 0.2;
+        pipeline.signal.noise.chroma_amount = 0.2;
+        pipeline.signal.tracking.line_jitter_px = 3.0;
+
+        let effective = pipeline.effective_preview_signal();
+        let stages = resolve_still_stages(&input, pipeline.signal, pipeline.model);
+
+        assert!(effective.chroma.offset_px < 0.60);
+        assert!(effective.chroma.bleed_px >= effective.chroma.offset_px.abs() * 2.5);
+        assert!(effective.noise.luma_amount < 0.04);
+        assert!(effective.noise.chroma_amount < 0.025);
+        assert!(effective.tracking.line_jitter_px < 0.55);
+        assert!((stages.chroma_degradation.offset_px - effective.chroma.offset_px).abs() < 1e-6);
+        assert!(
+            (stages.reconstruction_output.luma_noise_amount - effective.noise.luma_amount).abs()
+                < 1e-6
+        );
     }
 
     #[test]

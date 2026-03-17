@@ -88,6 +88,8 @@ Current notes:
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
 - the current single-pass calibration emphasizes tone shoulder, luma softness, and chroma bandwidth loss ahead of jitter-heavy distortion
+- aggressive manual overrides are softened into effective preview ranges before the WGSL pass runs
+- when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
 
 ## Testing
 

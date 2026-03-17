@@ -103,23 +103,49 @@ fn run(args: Vec<String>) -> Result<(), CliError> {
     let input = load_png(&cli.input)?;
     let pipeline = pipeline_from_args(&cli);
     let output = pipeline.process_blocking(&input)?;
+    let effective_signal = pipeline.effective_preview_signal();
 
     save_png(&cli.output, output)?;
 
     println!("input:  {}", cli.input.display());
     println!("output: {}", cli.output.display());
     println!("shader: {}", pipeline.shader_id.label());
+    let mut guardrail_changes = Vec::new();
+    if pipeline.signal.luma.blur_px != effective_signal.luma.blur_px {
+        guardrail_changes.push("luma_blur");
+    }
+    if pipeline.signal.chroma.offset_px != effective_signal.chroma.offset_px {
+        guardrail_changes.push("chroma_offset");
+    }
+    if pipeline.signal.chroma.bleed_px != effective_signal.chroma.bleed_px {
+        guardrail_changes.push("chroma_bleed");
+    }
+    if pipeline.signal.noise.luma_amount != effective_signal.noise.luma_amount {
+        guardrail_changes.push("luma_noise");
+    }
+    if pipeline.signal.noise.chroma_amount != effective_signal.noise.chroma_amount {
+        guardrail_changes.push("chroma_noise");
+    }
+    if pipeline.signal.tracking.line_jitter_px != effective_signal.tracking.line_jitter_px {
+        guardrail_changes.push("line_jitter");
+    }
+    if !guardrail_changes.is_empty() {
+        println!(
+            "preview-guardrails: softened {}",
+            guardrail_changes.join(", ")
+        );
+    }
     println!(
         "effect: highlight_knee={} highlight_compression={} luma_blur={} chroma_offset={} chroma_bleed={} chroma_saturation={} luma_noise={} chroma_noise={} line_jitter={}",
-        pipeline.signal.tone.highlight_soft_knee,
-        pipeline.signal.tone.highlight_compression,
-        pipeline.signal.luma.blur_px,
-        pipeline.signal.chroma.offset_px,
-        pipeline.signal.chroma.bleed_px,
-        pipeline.signal.chroma.saturation,
-        pipeline.signal.noise.luma_amount,
-        pipeline.signal.noise.chroma_amount,
-        pipeline.signal.tracking.line_jitter_px
+        effective_signal.tone.highlight_soft_knee,
+        effective_signal.tone.highlight_compression,
+        effective_signal.luma.blur_px,
+        effective_signal.chroma.offset_px,
+        effective_signal.chroma.bleed_px,
+        effective_signal.chroma.saturation,
+        effective_signal.noise.luma_amount,
+        effective_signal.noise.chroma_amount,
+        effective_signal.tracking.line_jitter_px
     );
 
     Ok(())
