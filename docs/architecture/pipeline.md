@@ -1,17 +1,23 @@
 # Still-Image Pipeline
 
-The current real pipeline in `casseted-core` is still intentionally small:
+The current real still-image pipeline in `casseted-core` is intentionally small:
 
 - input: one `ImageFrame` in `RGBA8`
-- execution: one fullscreen `wgpu` render pass
-- shader: `shaders/passes/still_analog.wgsl`
+- execution: four fullscreen `wgpu` render passes
+- shaders:
+  `shaders/passes/still_input_conditioning.wgsl`,
+  `shaders/passes/still_luma_degradation.wgsl`,
+  `shaders/passes/still_chroma_degradation.wgsl`,
+  `shaders/passes/still_reconstruction_output.wgsl`
+- intermediate textures:
+  working YUV,
+  degraded luma,
+  degraded chroma
 - output: one processed `ImageFrame` read back to CPU memory
-
-What changed in the current phase is the internal structure of that pass: the code now names a small set of logical implementation stages instead of presenting the shader as one undifferentiated effect bundle.
 
 ## Current implementation stages
 
-The still-image path currently uses five logical stages:
+The still-image path keeps five logical implementation stages:
 
 1. input conditioning / tone shaping
 2. luma/chroma transform
@@ -19,24 +25,23 @@ The still-image path currently uses five logical stages:
 4. chroma degradation
 5. reconstruction / output
 
-All five stages are still executed inside one WGSL pass today.
+Those five stages are now executed as a limited four-pass runtime.
 
-## Formal-to-implementation mapping
+## Physical pass layout
 
-| Implementation stage | Formal v1 stage coverage | Current code location | Current pass boundary |
+| Physical pass | Primary output | Logical implementation stages covered | Formal v1 stage coverage |
 | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, and the currently spatial part of `TransportInstability` | `resolve_input_conditioning_stage()` in `casseted-pipeline`, `apply_input_conditioning()` and `apply_tone_shaping()` in WGSL | fused into `still_analog.wgsl` |
-| Luma/chroma transform | `RgbToLumaChroma` | `sample_working_signal()` in WGSL | fused into `still_analog.wgsl` |
-| Luma degradation | `LumaRecordPath` | `resolve_luma_degradation_stage()` and `degrade_luma()` | fused into `still_analog.wgsl` |
-| Chroma degradation | `ChromaRecordPath` | `resolve_chroma_degradation_stage()` and `degrade_chroma()` | fused into `still_analog.wgsl` |
-| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) plus `DecodeOutput` | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | fused into `still_analog.wgsl` |
+| `still_input_conditioning` | working YUV texture | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, and the current still-frame spatial subset of `TransportInstability` |
+| `still_luma_degradation` | degraded luma texture | luma degradation | `LumaRecordPath` |
+| `still_chroma_degradation` | degraded chroma texture | chroma degradation | `ChromaRecordPath` |
+| `still_reconstruction_output` | final `RGBA8` output | reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` |
 
 Important detail:
-the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it is grouped into input conditioning rather than split into its own pass.
+the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it remains fused into the first pass instead of becoming a standalone transport pass.
 
 ## Projection layer
 
-The pipeline owns a narrow projection bridge from the formal domain model into the current fused pass:
+The pipeline still owns a narrow projection bridge from the formal domain model into the current runtime:
 
 - `StillImagePipeline::from_vhs_model()`
 - `project_vhs_model_to_preview_signal()`
@@ -44,31 +49,30 @@ The pipeline owns a narrow projection bridge from the formal domain model into t
 - `resolve_still_stages()`
 - `EffectUniforms`
 
-This is intentionally narrow. It does not introduce:
+That bridge remains intentionally narrow. It does not introduce:
 
-- a pass graph
+- a render graph
 - a plugin system
 - a generalized planning runtime
-- multi-texture luma/chroma orchestration
+- pass scheduling outside the fixed still-image sequence
 
-## Why it stays single-pass for now
+## Why this is the chosen decomposition
 
-Keeping the current path in one pass is still the right tradeoff because the implementation-stage split is now clear enough for further work, while preserving:
+Four passes are the minimal useful split for the current stage because they:
 
-- the existing clean crate boundaries
-- the thin `casseted-gpu` runtime
-- the shader asset bridge in `casseted-pipeline`
-- a compact implementation path for the first algorithmic phase
+- create one explicit working-signal fan-out point after tone shaping
+- give luma and chroma independent branch passes without inventing a graph
+- keep noise and decode coupled, which avoids over-splitting the still path too early
 
-Splitting into multiple passes would add temporary textures and more orchestration, but it would not yet buy enough clarity to justify the weight.
+This is enough to support further still-image algorithm growth inside the current architecture while keeping orchestration compact.
 
 ## Deferred on purpose
 
 The following are still deferred:
 
-- explicit multi-pass luma/chroma textures
-- dropout masking
+- render-graph planning
+- dropout masking passes
 - head-switching artifacts
 - chroma phase error
 - video and temporal state
-- pipeline caching and resource reuse work
+- aggressive pipeline caching and resource reuse work

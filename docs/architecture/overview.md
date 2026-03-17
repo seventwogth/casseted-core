@@ -7,7 +7,7 @@ The current `casseted-core` workspace is intentionally split into four layers:
 3. Composition layer: `casseted-pipeline`
 4. Developer tooling layer: `casseted-cli` and `casseted-testing`
 
-Current data flow:
+Current still-image data flow:
 
 - CLI code reads a PNG into an `ImageFrame`
 - pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into the current still-preview controls
@@ -15,20 +15,33 @@ Current data flow:
 - `casseted-pipeline` resolves those controls into five logical implementation stages:
   `input conditioning / tone shaping`, `luma/chroma transform`, `luma degradation`,
   `chroma degradation`, and `reconstruction / output`
-- those stage-aligned controls are packed into one compact WGSL uniform block for the current fused still pass
-- `casseted-shaderlib` resolves the embedded WGSL source
-- `casseted-gpu` compiles and executes the single fullscreen pass that contains all five logical stages
+- those stage-aligned controls are packed into one compact WGSL uniform block shared by the current still passes
+- the runtime executes a limited four-pass chain:
+  `still_input_conditioning`,
+  `still_luma_degradation`,
+  `still_chroma_degradation`,
+  `still_reconstruction_output`
+- three intermediate textures carry the working YUV signal, degraded luma, and degraded chroma between passes
 - the processed image is copied back to CPU memory as an `ImageFrame`
 - CLI code writes the result as PNG
 
 The key point in the current phase is that the still-image path is now explicit at two levels:
 
 - the canonical signal model in `casseted-signal` still defines the eight formal v1 stages
-- the working GPU path groups them into five implementation stages while remaining one render pass
+- the working GPU path groups them into five implementation stages and executes them as a compact four-pass runtime without a render graph
 
-This is the current minimal decomposition: it makes model-to-implementation mapping readable without adding intermediate textures, pass scheduling, or a render graph.
+Why this degree of decomposition was chosen:
 
-Within that fused pass, the current visual calibration now intentionally favors tone shaping, luma softening, and chroma bandwidth loss over transport wobble. Jitter, crosstalk, and additive noise remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
+- it gives the still path a real branch point between luma and chroma
+- it makes intermediate signals inspectable and easier to recalibrate
+- it stays small enough to avoid graph planning, plugin hooks, or broad orchestration machinery
+
+What remains intentionally fused:
+
+- input interpretation, still-frame transport offsets, tone shaping, and `RGB -> YUV` fan-out share the first pass
+- additive noise and decode reconstruction remain together in the final pass
+
+Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softening, and chroma bandwidth loss over transport wobble. Jitter, crosstalk, and additive noise remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
 
 The current verification foundation mirrors that structure:
 

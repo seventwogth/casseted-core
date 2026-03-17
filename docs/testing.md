@@ -8,7 +8,7 @@ Current layers:
 - GPU smoke tests for the still-image pipeline
 - a CLI smoke test that exercises PNG input, pipeline execution, and PNG output
 - shared helpers in `casseted-testing` for deterministic images, PNG fixtures, and tolerance-based image-difference checks
-- committed visual regression fixtures for the current single-pass still pipeline in `assets/reference-images/still-pipeline-v1/`
+- committed visual regression fixtures for the current limited multi-pass still pipeline in `assets/reference-images/still-pipeline-v1/`
 - stage-oriented regression tests in `casseted-pipeline` that verify:
   stage reference PNGs,
   resolved uniforms/defaults,
