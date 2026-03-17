@@ -66,6 +66,10 @@ The current implementation path is anchored by:
 - [`docs/architecture/signal-model-v1.md`](./docs/architecture/signal-model-v1.md)
 - [`docs/math/signal-model-v1-formulas.md`](./docs/math/signal-model-v1-formulas.md)
 
+Agent stage log:
+
+- [`docs/agent-log/0001-limited-multi-pass-transition.md`](./docs/agent-log/0001-limited-multi-pass-transition.md)
+
 ## CLI
 
 The current CLI is a local developer utility for running the first still-image pipeline on one PNG image.
