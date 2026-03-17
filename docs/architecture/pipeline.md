@@ -33,7 +33,7 @@ Those five stages are now executed as a limited four-pass runtime.
 | --- | --- | --- | --- |
 | `still_input_conditioning` | working YUV texture | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, and the current still-frame spatial subset of `TransportInstability` |
 | `still_luma_degradation` | degraded luma texture | luma degradation | `LumaRecordPath` |
-| `still_chroma_degradation` | degraded chroma texture | chroma degradation | `ChromaRecordPath` |
+| `still_chroma_degradation` | degraded chroma texture | chroma degradation via low-pass, coarse chroma reconstruction, restrained smear, and optional vertical line blend | `ChromaRecordPath` |
 | `still_reconstruction_output` | final `RGBA8` output | reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` |
 
 Important detail:
@@ -65,6 +65,8 @@ Four passes are the minimal useful split for the current stage because they:
 - keep noise and decode coupled, which avoids over-splitting the still path too early
 
 This is enough to support further still-image algorithm growth inside the current architecture while keeping orchestration compact.
+
+The current chroma refinement stays inside that boundary: it deepens the chroma branch behavior without adding passes, new runtime abstractions, or a wider public control surface.
 
 ## Deferred on purpose
 

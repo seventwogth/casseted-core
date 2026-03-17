@@ -155,7 +155,7 @@ Purpose:
 make chroma lower-fidelity and less well-registered than luma.
 
 Current v1 shape:
-chroma delay, chroma blur, chroma saturation scaling, and optional vertical chroma blend.
+chroma delay, horizontal low-pass, coarse horizontal chroma reconstruction, restrained smear / bleed, chroma saturation scaling, and optional vertical line blend.
 
 ### 6. TransportInstability
 
@@ -275,11 +275,13 @@ Current stage-aligned mapping:
   `VhsLumaSettings.preemphasis_db` -> restrained detail residual gain -> `effect.luma_degradation.y`
 - chroma degradation:
   `VhsChromaSettings.delay_us` -> attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
-  `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma blur proxy -> `effect.chroma_degradation.y`
+  `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma bandwidth-loss proxy -> `effect.chroma_degradation.y`
   `VhsChromaSettings.saturation_gain` -> `effect.chroma_degradation.z`
   `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
 - reconstruction / output:
   `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
+
+The chroma pass keeps that uniform contract compact on purpose: the shader derives low-pass span, effective chroma cell width, and restrained smear from the same bandwidth-loss proxy instead of expanding the public preview API.
 
 Secondary mappings that are still present but not the main focus of this phase:
 
@@ -290,7 +292,7 @@ Secondary mappings that are still present but not the main focus of this phase:
 Current preview guardrails for manual / override-driven `SignalSettings`:
 
 - `tracking.line_jitter_px` uses a soft cap so strong values remain expressive but asymptotically stay below the current glitch-prone range
-- `chroma.offset_px` uses a signed soft cap and `chroma.bleed_px` gains a minimum blur floor tied to the effective offset
+- `chroma.offset_px` uses a signed soft cap and `chroma.bleed_px` gains a minimum bandwidth-loss floor tied to the effective offset
 - `noise.{luma_amount,chroma_amount}` use soft caps so noise does not jump ahead of tone and bandwidth loss
 - `tracking.vertical_offset_lines` also uses a signed soft cap so still-image transport wobble stays secondary
 - these rules are intentionally preview-only and do not redefine the formal model
@@ -301,7 +303,7 @@ The current limited multi-pass still-image implementation is intentionally not b
 
 - tone rolloff and soft highlight compression
 - luma softness and microcontrast loss
-- chroma bandwidth loss and blur
+- chroma bandwidth loss, coarse horizontal chroma resolution loss, and restrained bleed
 - only mild chroma misregistration
 - only mild transport wobble and noise
 
@@ -325,7 +327,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma low-pass/detail attenuation biased toward microcontrast loss
-- chroma delay/blur/saturation degradation biased toward blur over misregistration
+- chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
 - reconstruction back to RGB with additive noise and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 
