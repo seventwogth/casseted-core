@@ -5,7 +5,7 @@
 //! - `tone` + `tracking`: input conditioning / tone shaping
 //! - `luma`: luma degradation
 //! - `chroma`: chroma degradation
-//! - `noise`: reconstruction / output noise injection
+//! - `noise`: reconstruction / output noise contamination
 //!
 //! Important scope note:
 //! these are preview-facing authoring controls, not the canonical formal model.
@@ -115,9 +115,13 @@ impl ChromaSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NoiseSettings {
-    /// Preview luma-noise amplitude after formal sigma projection.
+    /// Preview luma-contamination amplitude after formal sigma projection.
+    /// The reconstruction pass reshapes it into brightness-dependent,
+    /// partially line-correlated luma noise.
     pub luma_amount: f32,
-    /// Preview chroma-noise amplitude after formal sigma projection.
+    /// Preview chroma-contamination amplitude after formal sigma projection.
+    /// The reconstruction pass reshapes it into softer, lower-bandwidth
+    /// chroma contamination.
     pub chroma_amount: f32,
 }
 

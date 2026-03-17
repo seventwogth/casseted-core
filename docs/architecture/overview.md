@@ -39,9 +39,9 @@ Why this degree of decomposition was chosen:
 What remains intentionally fused:
 
 - input interpretation, still-frame transport offsets, tone shaping, and `RGB -> YUV` fan-out share the first pass
-- additive noise, restrained still-image dropout handling, and decode reconstruction remain together in the final pass
+- refined noise contamination, restrained still-image dropout handling, and decode reconstruction remain together in the final pass
 
-Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softening, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch expresses bandwidth loss as horizontal low-pass filtering plus coarse chroma reconstruction and restrained bleed, while the luma branch now adds a thresholded asymmetric highlight smear so bright edges spread as part of signal loss instead of as post-process bloom. Jitter, crosstalk, additive noise, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
+Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softening, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch expresses bandwidth loss as horizontal low-pass filtering plus coarse chroma reconstruction and restrained bleed, while the luma branch adds a thresholded asymmetric highlight smear so bright edges spread as part of signal loss instead of as post-process bloom. The final pass now keeps luma noise brightness-shaped and mildly line/band-correlated, while chroma contamination stays broader and softer than luma. Jitter, crosstalk, refined noise, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
 
 The current verification foundation mirrors that structure:
 
