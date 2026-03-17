@@ -25,7 +25,7 @@ The implemented still-image subset is:
 1. input conditioning / tone shaping: gamma-coded `sRGB` input assumptions, still-frame transport offset, and luma-preserving soft-knee highlight compression
 2. `RGB -> YUV` decomposition
 3. luma low-pass/detail attenuation
-4. chroma horizontal delay + chroma blur + optional vertical chroma blend
+4. chroma horizontal delay + bandwidth-limited chroma reconstruction + optional vertical line blend
 5. `YUV -> RGB` reconstruction with a small Y/C leakage term and additive luma/chroma noise
 
 The current implementation keeps those stages in a compact four-pass runtime and names them explicitly in code through:
@@ -104,13 +104,17 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | \(a_C\) | chroma noise amplitude | `SignalSettings.noise.chroma_amount` |
 | \(p_J\) | line-jitter amplitude in reference pixels | `SignalSettings.tracking.line_jitter_px` |
 
-### Discrete radii used by the still shader
+### Discrete terms used by the still shader
 
 | Symbol | Meaning | Current source |
 | --- | --- | --- |
 | \(r_Y\) | resolved luma blur radius in pixels | `SignalSettings.luma.blur_px * s_ref` |
 | \(r_\tau\) | resolved chroma delay in pixels | `SignalSettings.chroma.offset_px * s_ref` |
-| \(r_C\) | resolved chroma blur radius in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
+| \(r_C\) | resolved chroma bandwidth-loss proxy in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
+| \(r_L\) | derived chroma low-pass span | `0.35 + 0.85 * r_C` for the bandwidth-loss branch |
+| \(d_C\) | derived chroma reconstruction cell width | `1.0 + 0.65 * r_C` |
+| \(\alpha_S\) | mild trailing-smear mix | `clamp(0.10 + 0.16 * r_C / (r_C + 1.0), 0, 0.26)` |
+| \(\delta_S\) | restrained smear shift coupled to delay sign | `sign(r_tau) * min(0.5 * d_C, abs(r_tau) + 0.25 * r_L)` |
 
 ### Current range rules used by stage verification
 
@@ -123,7 +127,7 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.luma_degradation.x` | resolved blur radius `>= 0`; manual preview values are softly capped at high magnitudes |
 | `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.12]` |
 | `effect.chroma_degradation.x` | current model projection is non-negative and intentionally attenuated relative to blur; manual preview values use a signed soft cap |
-| `effect.chroma_degradation.y` | resolved blur radius `>= 0`; manual preview values are softly capped and also floored against the effective chroma offset |
+| `effect.chroma_degradation.y` | resolved bandwidth-loss proxy `>= 0`; manual preview values are softly capped and also floored against the effective chroma offset |
 | `effect.chroma_degradation.z` | saturation gain `>= 0` |
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
 | `effect.reconstruction_output.xy` | noise amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges |
@@ -323,7 +327,7 @@ Purpose:
 make chroma softer and less precisely registered than luma.
 
 Mathematical meaning:
-apply a lightly delayed chroma sample, a blur-dominant horizontal chroma low-pass, optional vertical chroma blend, then saturation scaling.
+apply a lightly delayed chroma sample, prefilter it horizontally, reconstruct it on a coarser horizontal chroma grid, add a restrained smear bias, optionally blend adjacent lines, then saturation scaling.
 
 Resolved radii:
 
@@ -336,42 +340,84 @@ r_C = s_{\text{ref}} \cdot p_C
 where:
 
 - \(p_\tau = \texttt{SignalSettings.chroma.offset\_px}\)
-- \(p_C = \texttt{SignalSettings.chroma.bleed\_px}\), where `bleed_px` is a legacy preview name for the chroma blur radius proxy
+- \(p_C = \texttt{SignalSettings.chroma.bleed\_px}\), where `bleed_px` is a legacy preview name for the shared chroma bandwidth-loss proxy
 
-The delayed chroma taps are sampled around the delayed center:
+Neutral-preservation branch:
 
 \[
-C_0 = C(x + r_\tau, y)
+\text{if } r_C \le \varepsilon,\qquad C_S(x, y) = C(x + r_\tau, y)
+\]
+
+with the same optional vertical line blend and final saturation scaling. This keeps the neutral transform case exact when blur is disabled.
+
+For the bandwidth-loss branch \(r_C > \varepsilon\), derive:
+
+\[
+r_L = 0.35 + 0.85r_C
+\qquad
+d_C = 1 + 0.65r_C
 \]
 
 \[
-C_{-1} = C(x + r_\tau - r_C, y), \qquad C_{+1} = C(x + r_\tau + r_C, y)
+\alpha_S = \operatorname{clamp}\left(0.10 + 0.16\frac{r_C}{r_C + 1}, 0, 0.26\right)
+\qquad
+\delta_S = \operatorname{sign}(r_\tau)\min\left(0.5d_C, |r_\tau| + 0.25r_L\right)
+\]
+
+Horizontal chroma prefilter:
+
+\[
+\Delta_1 = \max(0.65, 0.55r_L + 0.35)
+\qquad
+\Delta_2 = \max(\Delta_1 + 0.75, 1.35r_L + 0.75)
 \]
 
 \[
-C_{-2} = C(x + r_\tau - 2r_C, y), \qquad C_{+2} = C(x + r_\tau + 2r_C, y)
+L(x, y; r_L) =
+0.12C(x - \Delta_2, y)
++ 0.23C(x - \Delta_1, y)
++ 0.30C(x, y)
++ 0.23C(x + \Delta_1, y)
++ 0.12C(x + \Delta_2, y)
 \]
 
-Horizontal chroma blur:
+Coarse horizontal chroma reconstruction:
 
 \[
-C_H = 0.14C_{-2} + 0.22C_{-1} + 0.28C_0 + 0.22C_{+1} + 0.14C_{+2}
+x^- = \left(\left\lfloor\frac{x + r_\tau}{d_C} - 0.5\right\rfloor + 0.5\right)d_C
+\qquad
+x^+ = x^- + d_C
+\]
+
+\[
+t = \operatorname{smoothstep}\left(0.15, 0.85, \operatorname{clamp}\left(\frac{x + r_\tau - x^-}{d_C}, 0, 1\right)\right)
+\]
+
+\[
+C_R(x, y) = (1 - t)L(x^-, y; r_L) + tL(x^+, y; r_L)
+\]
+
+Restrained chroma smear / bleed:
+
+\[
+\widetilde{L}(x, y) = L(x, y; 1.15r_L)
+\]
+
+\[
+C_S(x, y) = (1 - \alpha_S)C_R(x, y)
++ \alpha_S\left[0.78C_R(x, y) + 0.22\widetilde{L}(x - \delta_S, y)\right]
 \]
 
 Vertical chroma blend:
 
 \[
-C_\uparrow = C(x + r_\tau, y - 1), \qquad C_\downarrow = C(x + r_\tau, y + 1)
-\]
-
-\[
-C_V = 0.2(C_\uparrow + 3C_H + C_\downarrow)
+C_V(x, y) = 0.25C_S(x, y - 1) + 0.5C_S(x, y) + 0.25C_S(x, y + 1)
 \]
 
 Final chroma approximation:
 
 \[
-C_D = g_C \left[(1 - \beta_V)C_H + \beta_V C_V\right]
+C_D(x, y) = g_C \left[(1 - \beta_V)C_S(x, y) + \beta_V C_V(x, y)\right]
 \]
 
 where:
@@ -380,13 +426,13 @@ where:
 - \(\beta_V = \texttt{VhsDecodeSettings.chroma\_vertical\_blend}\)
 
 Visual effect:
-color bleeding, softened color edges, visible chroma resolution loss, and only mild luma/chroma misregistration.
+color bleeding, softened color edges, visible horizontal chroma resolution loss, and only mild luma/chroma misregistration.
 
 Signal motivation:
 high for lower chroma bandwidth and registration error.
 
 Engineering approximation:
-current still-image v1 uses one delayed, blurred chroma path instead of a full encoded chroma carrier model. The still-path calibration deliberately makes blur stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching.
+current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> coarse reconstruction -> restrained smear` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching.
 
 Pipeline / shader mapping:
 
@@ -641,7 +687,7 @@ p_{J,\mathrm{eff}} = G(|p_J|; 0.35, 0.55)
 Interpretation:
 
 - strong preview values are still allowed, but they stop scaling linearly into the glitch-prone region
-- chroma offset is intentionally coupled to a minimum chroma blur so the image reads as chroma loss rather than RGB splitting
+- chroma offset is intentionally coupled to a minimum chroma bandwidth-loss proxy so the image reads as chroma loss rather than RGB splitting
 - noise and transport terms remain secondary to tone shaping, luma softening, and chroma bandwidth loss
 
 ## 8. Explicitly Not Modeled At This Stage

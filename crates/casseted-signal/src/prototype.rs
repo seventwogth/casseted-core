@@ -91,7 +91,9 @@ impl LumaSettings {
 pub struct ChromaSettings {
     /// Horizontal chroma delay proxy in reference-width pixels.
     pub offset_px: f32,
-    /// Legacy preview control name for the chroma blur radius proxy.
+    /// Legacy preview control name for the shared chroma bandwidth-loss proxy.
+    /// The current chroma pass derives both horizontal low-pass span and
+    /// effective coarse chroma resolution from this value.
     pub bleed_px: f32,
     /// Post-blur chroma gain. `1.0` keeps chroma magnitude neutral.
     pub saturation: f32,
