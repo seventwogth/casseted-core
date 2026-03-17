@@ -72,6 +72,7 @@ Agent stage log:
 - [`docs/agent-log/0001-limited-multi-pass-transition.md`](./docs/agent-log/0001-limited-multi-pass-transition.md)
 - [`docs/agent-log/0002-chroma-path-refinement.md`](./docs/agent-log/0002-chroma-path-refinement.md)
 - [`docs/agent-log/0003-highlight-bleed-and-dropout.md`](./docs/agent-log/0003-highlight-bleed-and-dropout.md)
+- [`docs/agent-log/0004-noise-path-refinement.md`](./docs/agent-log/0004-noise-path-refinement.md)
 
 ## CLI
 
@@ -94,7 +95,7 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
-- the current limited multi-pass calibration emphasizes tone shoulder, luma softness, restrained highlight bleed, chroma bandwidth loss, and mild dropout ahead of jitter-heavy distortion
+- the current limited multi-pass calibration emphasizes tone shoulder, luma softness, restrained highlight bleed, chroma bandwidth loss, brightness-shaped luma noise, softer chroma contamination, and mild dropout ahead of jitter-heavy distortion
 - aggressive manual overrides are softened into effective preview ranges before the WGSL passes run
 - when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
 

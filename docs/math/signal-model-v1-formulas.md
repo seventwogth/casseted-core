@@ -8,7 +8,7 @@ It is intentionally narrower than a full VHS deck model. The goal is to define t
 - BT.601-like luma/chroma working decomposition
 - luma-oriented horizontal bandwidth loss
 - one controllable chroma degradation path
-- reconstruction back to RGB with the currently integrated noise subset
+- reconstruction back to RGB with the current signal-shaped noise subset
 
 The current GPU implementation lives in:
 
@@ -26,7 +26,7 @@ The implemented still-image subset is:
 2. `RGB -> YUV` decomposition
 3. luma low-pass/detail attenuation plus restrained highlight bleed
 4. chroma horizontal delay + bandwidth-limited chroma reconstruction + optional vertical line blend
-5. `YUV -> RGB` reconstruction with a small Y/C leakage term, additive luma/chroma noise, and restrained still-image dropout handling
+5. `YUV -> RGB` reconstruction with a small Y/C leakage term, brightness-shaped luma contamination, softer chroma contamination, and restrained still-image dropout handling
 
 The current implementation keeps those stages in a compact four-pass runtime and names them explicitly in code through:
 
@@ -498,19 +498,19 @@ Pipeline / shader mapping:
 ### 4.5 Reconstruction To Output RGB
 
 Purpose:
-recombine degraded luma and chroma into a display RGB image after the current still-image dropout approximation, then inject the additive noise subset near output reconstruction.
+recombine degraded luma and chroma into a display RGB image after the current still-image dropout approximation, then inject the refined noise subset near output reconstruction.
 
 Mathematical meaning:
-take the dropout-conditioned signal from section `5.3`, add a small Y/C leakage term to luma, add chroma noise, then invert the working matrix.
+take the dropout-conditioned signal from section `5.3`, add a small Y/C leakage term to luma, apply the luma/chroma-specific contamination terms from section `5.2`, then invert the working matrix.
 
 Current approximation:
 
 \[
-Y_R = \operatorname{clamp}\left(Y_L^\star + \epsilon_{YC}(0.10U_D^\star - 0.05V_D^\star) + n_Y, 0, 1\right)
+Y_R = \operatorname{clamp}\left(Y_L^\star + \epsilon_{YC}(0.10U_D^\star - 0.05V_D^\star) + n_Y^\star, 0, 1\right)
 \]
 
 \[
-(U_R, V_R) = (U_D^\star, V_D^\star) + (n_C, -0.5n_C)
+(U_R, V_R) = (U_D^\star, V_D^\star) + \Delta C_A + \Delta C_\perp
 \]
 
 \[
@@ -522,13 +522,13 @@ B_{\text{out}} &= Y_R + 2.03211U_R
 \]
 
 Visual effect:
-coherent recombination with mild color leakage and softened chroma detail.
+coherent recombination with mild color leakage and contamination that reads more like analog signal dirt than like a uniform grain overlay.
 
 Signal motivation:
 medium. Reconstruction is required, but the exact consumer-decoder behavior is simplified.
 
 Engineering approximation:
-the still pass reconstructs directly to clamped RGB in the final fragment stage.
+the still pass reconstructs directly to clamped RGB in the final fragment stage after evaluating the dropout-conditioned contamination terms.
 
 Pipeline / shader mapping:
 
@@ -572,23 +572,90 @@ Mapping:
 Calibration note:
 the current still-image path keeps transport instability intentionally subordinate to tone shaping, luma softening, and chroma bandwidth loss. This avoids the decorative wobble / glitch-art failure mode that appeared when transport terms were weighted too aggressively relative to the signal-loss stages.
 
-### 5.2 Additive Noise
+### 5.2 Signal-Shaped Noise Contamination
 
-The shader uses deterministic hash noise:
+The shader still uses deterministic hash noise, but it no longer treats luma and chroma as the same pixelwise additive overlay.
+
+Define a centered hash term
 
 \[
-n_Y = a_Y \cdot (h_Y - 0.5)
-\qquad
-n_C = a_C \cdot (h_C - 0.5)
+\xi(p) = \operatorname{hash}(p) - 0.5
 \]
 
-where \(h_Y, h_C \in [0, 1]\) are hash-derived pseudo-random samples.
+and a smoothed horizontal band helper
+
+\[
+s(t) = t^2(3 - 2t)
+\]
+
+\[
+b(x, \ell; \kappa, \sigma_x, \sigma_y) =
+\operatorname{mix}\left(
+\xi(\lfloor \kappa x \rfloor + \sigma_x,\; \sigma_y\ell + f + 1.37\sigma_x),
+\xi(\lfloor \kappa x \rfloor + \sigma_x + 1,\; \sigma_y\ell + f + 1.37\sigma_x),
+s(\operatorname{fract}(\kappa x))
+\right)
+\]
+
+Brightness-shaped luma contamination:
+
+\[
+m_Y = 0.35 + 0.65(1 - Y_L^\star)^{0.7}
+\]
+
+\[
+g_Y = \operatorname{mix}(1.0, 0.72, \gamma_D)
+\]
+
+\[
+n_Y^\star =
+a_Y m_Y g_Y \left(
+0.45\xi(x + f,\; y + 3)
++ 0.35b(x, y; 0.12, 11, 0.31)
++ 0.20\xi(y + 29,\; f + 13)
+\right)
+\]
+
+Lower-bandwidth chroma contamination:
+
+\[
+m_C = 0.55 + 0.25(1 - Y_L^\star)^{0.5}
+\]
+
+\[
+g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_D)
+\]
+
+\[
+\eta_U = 0.72b(x, y; 0.08, 47, 0.23) + 0.28\xi(0.5y + 97,\; f + 23)
+\]
+
+\[
+\eta_V = 0.72b(x, y; 0.06, 71, 0.19) + 0.28\xi(0.5y + 131,\; f + 31)
+\]
+
+\[
+\eta_\perp = \xi(\lfloor 0.14x \rfloor + 0.12y + 149,\; f + 37)
+\]
+
+\[
+\Delta C_A = a_C m_C g_C^D (\eta_U,\eta_V)
+\]
+
+\[
+\Delta C_\perp = 0.45a_C g_C^D \eta_\perp (-V_D^\star, U_D^\star)
+\]
+
+Here \(\Delta C_A\) is the broader additive chroma contamination term, while \(\Delta C_\perp\) is a small phase-like perturbation aligned to the current chroma vector instead of to RGB space.
 
 Mapping:
 
 - formal source: `VhsNoiseSettings.luma_sigma`, `VhsNoiseSettings.chroma_sigma`
 - pipeline projection: `project_vhs_model_to_preview_signal()`
 - shader uniforms: `effect.reconstruction_output.x`, `effect.reconstruction_output.y`
+
+Calibration note:
+the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, keeps chroma contamination broader and softer than luma contamination, and attenuates both inside dropout masks so localized signal loss remains readable.
 
 ### 5.3 Dropout Approximation
 
@@ -703,7 +770,7 @@ Signal motivation:
 medium to high. Real dropout handling is often temporal or decoder-specific; this still-image subset instead focuses on plausible local signal loss without introducing frame history.
 
 Engineering approximation:
-the shader uses deterministic line hashes and neighboring-line concealment in the final pass. This is intentionally a still-image v1 approximation, not a temporal dropout compensator.
+the shader uses deterministic line hashes and neighboring-line concealment in the final pass. The same pass lightly attenuates the general output-noise terms inside active dropout regions so the concealment approximation does not read like a uniform noisy overlay. This is intentionally a still-image v1 approximation, not a temporal dropout compensator.
 
 Pipeline / shader mapping:
 
@@ -740,7 +807,7 @@ Pipeline / shader mapping:
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
 | `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` and `apply_input_conditioning()` |
-| `NoiseAndDropouts` | additive noise from `SignalSettings.noise.*` plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_output_noise()`, `line_dropout_mask()`, `apply_dropout()` |
+| `NoiseAndDropouts` | brightness-shaped luma contamination and softer band-correlated chroma contamination from `SignalSettings.noise.*`, plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_output_noise()`, `line_dropout_mask()`, `apply_dropout()` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `reconstruct_output()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
@@ -752,7 +819,7 @@ Implemented now:
 - luma low-pass/detail attenuation with restrained highlight bleed
 - delayed and blurred chroma path with saturation control
 - reconstruction back to RGB
-- line jitter, additive luma/chroma noise, and restrained line-segment dropout handling
+- line jitter, brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout handling
 
 Documented here but not implemented yet:
 
@@ -799,7 +866,7 @@ where:
 - \(b_Y\) is in MHz
 - \(b_C\) is in kHz
 - \(\tau_C\) and \(\tau_J\) are in microseconds
-- \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas
+- \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas projected into the preview amplitudes that the reconstruction shader reshapes into luma/chroma-specific contamination
 
 These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
 

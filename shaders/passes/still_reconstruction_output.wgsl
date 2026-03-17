@@ -16,6 +16,11 @@ struct ConditionedInput {
     noise_coord: vec2<f32>,
 };
 
+struct OutputNoise {
+    luma: f32,
+    chroma: vec2<f32>,
+};
+
 @group(0) @binding(0) var luma_texture: texture_2d<f32>;
 @group(0) @binding(1) var chroma_texture: texture_2d<f32>;
 @group(0) @binding(2) var signal_sampler: sampler;
@@ -34,6 +39,21 @@ fn yuv_to_rgb(yuv: vec3<f32>) -> vec3<f32> {
 
 fn hash12(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+fn centered_hash(p: vec2<f32>) -> f32 {
+    return hash12(p) - 0.5;
+}
+
+fn smooth_noise_x(noise_coord: vec2<f32>, cells_per_px: f32, seed: vec2<f32>) -> f32 {
+    let phase = noise_coord.x * cells_per_px;
+    let cell = floor(phase);
+    let blend = fract(phase);
+    let smooth_blend = blend * blend * (3.0 - 2.0 * blend);
+    let line_phase = noise_coord.y * seed.y + effect.reconstruction_output.w + seed.x * 1.37;
+    let left = centered_hash(vec2<f32>(cell + seed.x, line_phase));
+    let right = centered_hash(vec2<f32>(cell + seed.x + 1.0, line_phase));
+    return mix(left, right, smooth_blend);
 }
 
 fn sample_luma(uv: vec2<f32>) -> f32 {
@@ -65,13 +85,68 @@ fn apply_input_conditioning(uv: vec2<f32>) -> ConditionedInput {
     return conditioned;
 }
 
-fn sample_output_noise(noise_coord: vec2<f32>) -> vec2<f32> {
+fn sample_output_noise(
+    noise_coord: vec2<f32>,
+    luma_signal: f32,
+    chroma_signal: vec2<f32>,
+    dropout_mix: f32,
+) -> OutputNoise {
     let frame_index = effect.reconstruction_output.w;
-    let luma_noise = (hash12(noise_coord + vec2<f32>(frame_index, 3.0)) - 0.5)
-        * effect.reconstruction_output.x;
-    let chroma_noise = (hash12(noise_coord.yx + vec2<f32>(5.0, frame_index)) - 0.5)
-        * effect.reconstruction_output.y;
-    return vec2<f32>(luma_noise, chroma_noise);
+    let clamped_luma = clamp(luma_signal, 0.0, 1.0);
+
+    var noise: OutputNoise;
+    noise.luma = 0.0;
+    noise.chroma = vec2<f32>(0.0, 0.0);
+
+    if (effect.reconstruction_output.x > 1e-5) {
+        let luma_visibility = 0.35 + 0.65 * pow(1.0 - clamped_luma, 0.7);
+        let luma_fine = centered_hash(noise_coord + vec2<f32>(frame_index, 3.0));
+        let luma_band = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 17.0),
+            0.12,
+            vec2<f32>(11.0, 0.31),
+        );
+        let luma_line = centered_hash(vec2<f32>(noise_coord.y + 29.0, frame_index + 13.0));
+        let luma_dropout_scale = mix(1.0, 0.72, dropout_mix);
+        noise.luma = (luma_fine * 0.45 + luma_band * 0.35 + luma_line * 0.20)
+            * effect.reconstruction_output.x
+            * luma_visibility
+            * luma_dropout_scale;
+    }
+
+    if (effect.reconstruction_output.y > 1e-5) {
+        let chroma_band_u = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 41.0),
+            0.08,
+            vec2<f32>(47.0, 0.23),
+        );
+        let chroma_band_v = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 67.0),
+            0.06,
+            vec2<f32>(71.0, 0.19),
+        );
+        let chroma_line_u =
+            centered_hash(vec2<f32>(noise_coord.y * 0.5 + 97.0, frame_index + 23.0));
+        let chroma_line_v =
+            centered_hash(vec2<f32>(noise_coord.y * 0.5 + 131.0, frame_index + 31.0));
+        let chroma_visibility = 0.55 + 0.25 * pow(1.0 - clamped_luma, 0.5);
+        let chroma_dropout_scale = mix(1.0, 0.45, dropout_mix);
+        let chroma_additive = vec2<f32>(
+            chroma_band_u * 0.72 + chroma_line_u * 0.28,
+            chroma_band_v * 0.72 + chroma_line_v * 0.28,
+        ) * effect.reconstruction_output.y
+            * chroma_visibility
+            * chroma_dropout_scale;
+        let phase_like = centered_hash(vec2<f32>(
+            floor(noise_coord.x * 0.14) + noise_coord.y * 0.12 + 149.0,
+            frame_index + 37.0,
+        ));
+        let chroma_phase = vec2<f32>(-chroma_signal.y, chroma_signal.x)
+            * (phase_like * effect.reconstruction_output.y * 0.45 * chroma_dropout_scale);
+        noise.chroma = chroma_additive + chroma_phase;
+    }
+
+    return noise;
 }
 
 fn line_dropout_mask(noise_coord: vec2<f32>) -> f32 {
@@ -143,13 +218,19 @@ fn apply_dropout(
     return vec4<f32>(dropout_luma, dropout_chroma, dropout_mix);
 }
 
-fn reconstruct_output(luma_signal: f32, chroma_signal: vec2<f32>, noise: vec2<f32>) -> vec3<f32> {
+fn reconstruct_output(
+    luma_signal: f32,
+    chroma_signal: vec2<f32>,
+    noise: OutputNoise,
+) -> vec3<f32> {
     let reconstructed_y = clamp(
-        luma_signal + dot(chroma_signal, vec2<f32>(0.10, -0.05)) * effect.reconstruction_output.z + noise.x,
+        luma_signal
+            + dot(chroma_signal, vec2<f32>(0.10, -0.05)) * effect.reconstruction_output.z
+            + noise.luma,
         0.0,
         1.0,
     );
-    let reconstructed_chroma = chroma_signal + vec2<f32>(noise.y, -noise.y * 0.5);
+    let reconstructed_chroma = chroma_signal + noise.chroma;
     return clamp(
         yuv_to_rgb(vec3<f32>(reconstructed_y, reconstructed_chroma.x, reconstructed_chroma.y)),
         vec3<f32>(0.0),
@@ -185,7 +266,12 @@ fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
         sample_luma(in.uv),
         sample_chroma(in.uv),
     );
-    let noise = sample_output_noise(conditioned.noise_coord);
+    let noise = sample_output_noise(
+        conditioned.noise_coord,
+        dropped_signal.x,
+        dropped_signal.yz,
+        dropped_signal.w,
+    );
     let rgb = reconstruct_output(dropped_signal.x, dropped_signal.yz, noise);
     return vec4<f32>(rgb, 1.0);
 }

@@ -29,7 +29,7 @@ Inside the model:
 - RGB to luma/chroma decomposition
 - separate luma and chroma degradation paths
 - still-frame transport instability that can be expressed spatially
-- additive noise and dropout-style corruption
+- signal-shaped noise contamination and dropout-style corruption
 - reconstruction back to display RGB
 
 Explicitly outside the model:
@@ -66,7 +66,7 @@ R'G'B' input
   -> degrade luma bandwidth/detail
   -> degrade chroma bandwidth / delay / saturation
   -> apply line-wise spatial instability
-  -> inject noise and optional corruption
+  -> inject signal-shaped luma/chroma contamination and optional corruption
   -> reconstruct output RGB
 ```
 
@@ -89,13 +89,13 @@ Those stages now execute through a limited four-pass runtime:
 | Input conditioning pass | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, plus the currently spatial subset of `TransportInstability` | `still_input_conditioning.wgsl` |
 | Luma pass | luma degradation | `LumaRecordPath` | `still_luma_degradation.wgsl` |
 | Chroma pass | chroma degradation | `ChromaRecordPath` | `still_chroma_degradation.wgsl` |
-| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (noise + restrained still-dropout subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
+| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (brightness-shaped luma contamination, softer chroma contamination, and the restrained still-dropout subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
 
 Why this grouping is used now:
 
 - it creates one explicit working-signal fan-out point after tone shaping
 - it gives luma and chroma separate physical branches without introducing a render graph
-- it keeps noise and decode fused so the orchestration stays compact for still-image work
+- it keeps signal-shaped noise and decode fused so the orchestration stays compact for still-image work
 
 ## Visual Regression Mapping
 
@@ -171,7 +171,7 @@ Purpose:
 remove the "pure digital filter" feel by injecting stochastic corruption.
 
 Current v1 shape:
-additive luma/chroma noise plus a restrained line-oriented dropout approximation driven by the formal dropout parameters and resolved through adjacent-line concealment instead of temporal logic.
+brightness-shaped luma contamination, softer lower-bandwidth chroma contamination, and a restrained line-oriented dropout approximation driven by the formal dropout parameters and resolved through adjacent-line concealment instead of temporal logic.
 
 ### 8. DecodeOutput
 
@@ -289,7 +289,7 @@ Secondary mappings that are still present but not the main focus of this phase:
 
 - `VhsTransportSettings.line_jitter_us` -> attenuated input-conditioning jitter proxy -> `effect.input_conditioning.z`
 - `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot -> `effect.input_conditioning.w`
-- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction noise amplitudes -> `effect.reconstruction_output.xy`
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction contamination amplitudes that the final pass reshapes into brightness-dependent luma noise and softer band-correlated chroma contamination -> `effect.reconstruction_output.xy`
 
 Current preview guardrails for manual / override-driven `SignalSettings`:
 
@@ -308,7 +308,7 @@ The current limited multi-pass still-image implementation is intentionally not b
 - restrained highlight bleed that reads like scan-direction signal smear, not bloom
 - chroma bandwidth loss, coarse horizontal chroma resolution loss, and restrained bleed
 - only mild chroma misregistration
-- only mild transport wobble, noise, and dropout
+- only mild transport wobble, noise contamination, and dropout
 
 Why this changed:
 
@@ -323,6 +323,7 @@ Scene-level calibration notes for the current limited multi-pass path:
 - bright highlights should roll into a shoulder instead of clipping to flat white
 - bright highlight edges should spread a little before they read as glow
 - dark scenes should keep noise and dropout subordinate to tone and bandwidth loss
+- neutral surfaces should pick up faint line/band contamination before they read as a uniform grain overlay
 - skin and portrait areas should look softer and dirtier, not decoratively torn apart
 
 ## Implementation Status
@@ -332,7 +333,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma low-pass/detail attenuation biased toward microcontrast loss, with restrained highlight bleed embedded in the same branch
 - chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
-- reconstruction back to RGB with additive noise, restrained line-segment dropout handling, and restrained Y/C leakage
+- reconstruction back to RGB with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 
 Still deferred:
