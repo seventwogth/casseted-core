@@ -27,6 +27,8 @@ The key point in the current phase is that the still-image path is now explicit 
 
 This is the current minimal decomposition: it makes model-to-implementation mapping readable without adding intermediate textures, pass scheduling, or a render graph.
 
+Within that fused pass, the current visual calibration now intentionally favors tone shaping, luma softening, and chroma bandwidth loss over transport wobble. Jitter, crosstalk, and additive noise remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
+
 The current verification foundation mirrors that structure:
 
 - committed PNG fixtures live in `assets/reference-images/still-pipeline-v1/`

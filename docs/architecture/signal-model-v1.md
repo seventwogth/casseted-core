@@ -261,11 +261,11 @@ Current stage-aligned mapping:
 - input conditioning / tone shaping:
   `VhsToneSettings` -> `SignalSettings.tone` -> `effect.input_conditioning.xy`
 - luma degradation:
-  `VhsLumaSettings.bandwidth_mhz` -> preview luma blur proxy -> `effect.luma_degradation.x`
-  `VhsLumaSettings.preemphasis_db` -> small detail residual gain -> `effect.luma_degradation.y`
+  `VhsLumaSettings.bandwidth_mhz` -> stronger preview luma blur proxy -> `effect.luma_degradation.x`
+  `VhsLumaSettings.preemphasis_db` -> restrained detail residual gain -> `effect.luma_degradation.y`
 - chroma degradation:
-  `VhsChromaSettings.delay_us` -> preview chroma offset proxy -> `effect.chroma_degradation.x`
-  `VhsChromaSettings.bandwidth_khz` -> preview chroma blur proxy -> `effect.chroma_degradation.y`
+  `VhsChromaSettings.delay_us` -> attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
+  `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma blur proxy -> `effect.chroma_degradation.y`
   `VhsChromaSettings.saturation_gain` -> `effect.chroma_degradation.z`
   `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
 - reconstruction / output:
@@ -273,20 +273,44 @@ Current stage-aligned mapping:
 
 Secondary mappings that are still present but not the main focus of this phase:
 
-- `VhsTransportSettings.line_jitter_us` -> input-conditioning jitter proxy -> `effect.input_conditioning.z`
+- `VhsTransportSettings.line_jitter_us` -> attenuated input-conditioning jitter proxy -> `effect.input_conditioning.z`
 - `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot -> `effect.input_conditioning.w`
-- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> reconstruction noise amplitudes -> `effect.reconstruction_output.xy`
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction noise amplitudes -> `effect.reconstruction_output.xy`
+
+## Current Visual Calibration Priorities
+
+The current fused still-image implementation is intentionally not balanced equally across all formal stages. For the current phase, the visual priority is:
+
+- tone rolloff and soft highlight compression
+- luma softness and microcontrast loss
+- chroma bandwidth loss and blur
+- only mild chroma misregistration
+- only mild transport wobble and noise
+
+Why this changed:
+
+- earlier weights let line jitter and chroma delay read as decorative RGB-split wobble
+- that pushed the result toward glitch-like distortion art instead of signal degradation
+- the current calibration therefore strengthens bandwidth-loss proxies and attenuates transport / delay proxies
+
+Scene-level calibration notes for the current single-pass path:
+
+- text and hard verticals should soften and halo slightly before they wobble
+- neutral surfaces should show chroma softness before obvious hue splitting
+- bright highlights should roll into a shoulder instead of clipping to flat white
+- dark scenes should keep noise subordinate to tone and bandwidth loss
+- skin and portrait areas should look softer and dirtier, not decoratively torn apart
 
 ## Implementation Status
 
 The current repository now implements a reference-consistent subset of v1 as five logical stages fused into one WGSL pass:
 
-- input conditioning / tone shaping
+- input conditioning / tone shaping with a stronger soft-knee shoulder
 - `RGB -> YUV` decomposition
-- luma low-pass/detail attenuation
-- chroma delay/blur/saturation degradation
+- luma low-pass/detail attenuation biased toward microcontrast loss
+- chroma delay/blur/saturation degradation biased toward blur over misregistration
 - reconstruction back to RGB
-- line jitter and additive noise as integrated secondary terms
+- line jitter and additive noise as integrated but restrained secondary terms
 
 Still deferred:
 

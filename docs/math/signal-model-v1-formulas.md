@@ -47,11 +47,11 @@ Committed fixtures now live in `assets/reference-images/still-pipeline-v1/`.
 
 | Stage case | Reference PNG | Formulas section | Primary uniform focus | Default resolved values used by the fixture |
 | --- | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `input-conditioning-tone.png` | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.68`, `rho_h = 0.55`, `p_J = 1.10 * s_ref`, `delta_V = 0.75` |
+| Input conditioning / tone shaping | `input-conditioning-tone.png` | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.64`, `rho_h = 0.62`, `p_J = 0.35 * s_ref`, `delta_V = 0.25` |
 | Luma/chroma transform | `luma-chroma-transform.png` | `4.2` | none beyond the shared frame block; this is the neutral transform fixture for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
-| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.25 * s_ref`, `alpha_p = 0.075` |
-| Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 1.62 * s_ref`, `r_C = 1.75 * s_ref`, `g_C = 0.92`, `beta_V = 0.25` |
-| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2` | `effect.reconstruction_output` | `a_Y = 0.03`, `a_C = 0.015`, `epsilon_YC = 0.08`, `f = 0` |
+| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045` |
+| Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
+| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2` | `effect.reconstruction_output` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `f = 0` |
 
 Current committed output tolerance for those PNG comparisons:
 
@@ -116,11 +116,11 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | --- | --- |
 | `effect.input_conditioning.x` | `highlight_soft_knee` clamped to `[0, 0.999]` |
 | `effect.input_conditioning.y` | `highlight_compression >= 0` |
-| `effect.input_conditioning.z` | model-projected line jitter is non-negative; current manual preview path passes the supplied amplitude through |
+| `effect.input_conditioning.z` | model-projected line jitter is non-negative and intentionally attenuated in the still path; current manual preview path passes the supplied amplitude through |
 | `effect.input_conditioning.w` | vertical offset snapshot is signed and currently unbounded in the preview path |
 | `effect.luma_degradation.x` | resolved blur radius `>= 0` |
-| `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.20]` |
-| `effect.chroma_degradation.x` | current model projection is non-negative; manual preview path may supply signed offsets |
+| `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.12]` |
+| `effect.chroma_degradation.x` | current model projection is non-negative and intentionally attenuated relative to blur; manual preview path may supply signed offsets |
 | `effect.chroma_degradation.y` | resolved blur radius `>= 0` |
 | `effect.chroma_degradation.z` | saturation gain `>= 0` |
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
@@ -277,13 +277,13 @@ and \(p_Y = \texttt{SignalSettings.luma.blur\_px}\).
 The low-pass output is:
 
 \[
-H_Y = 0.12Y_{-2} + 0.23Y_{-1} + 0.30Y_0 + 0.23Y_{+1} + 0.12Y_{+2}
+H_Y = 0.15Y_{-2} + 0.22Y_{-1} + 0.26Y_0 + 0.22Y_{+1} + 0.15Y_{+2}
 \]
 
 The compact detail residual is:
 
 \[
-D_Y = Y_0 - (0.2Y_{-1} + 0.6Y_0 + 0.2Y_{+1})
+D_Y = Y_0 - (0.25Y_{-1} + 0.5Y_0 + 0.25Y_{+1})
 \]
 
 The final luma approximation is:
@@ -295,13 +295,13 @@ Y_L = \operatorname{clamp}(H_Y + \alpha_p D_Y, 0, 1)
 The current projection from the formal pre-emphasis setting is:
 
 \[
-\alpha_p = \operatorname{clamp}(0.025 \cdot p_{\text{db}}, 0, 0.20)
+\alpha_p = \operatorname{clamp}(0.015 \cdot p_{\text{db}}, 0, 0.12)
 \]
 
 where \(p_{\text{db}} = \texttt{VhsLumaSettings.preemphasis\_db}\).
 
 Visual effect:
-horizontal softening, less digital crispness, and reduced microcontrast in fine textures.
+horizontal softening, less digital crispness, reduced microcontrast in fine textures, and a stronger bias toward analog-like luma softness over synthetic edge ringing.
 
 Signal motivation:
 high for the low-pass concept, medium for the exact kernel.
@@ -321,7 +321,7 @@ Purpose:
 make chroma softer and less precisely registered than luma.
 
 Mathematical meaning:
-apply a delayed chroma sample, horizontal chroma blur, optional vertical chroma blend, then saturation scaling.
+apply a lightly delayed chroma sample, a blur-dominant horizontal chroma low-pass, optional vertical chroma blend, then saturation scaling.
 
 Resolved radii:
 
@@ -336,20 +336,24 @@ where:
 - \(p_\tau = \texttt{SignalSettings.chroma.offset\_px}\)
 - \(p_C = \texttt{SignalSettings.chroma.bleed\_px}\), where `bleed_px` is a legacy preview name for the chroma blur radius proxy
 
-The delayed chroma taps are sampled at:
+The delayed chroma taps are sampled around the delayed center:
 
 \[
 C_0 = C(x + r_\tau, y)
 \]
 
 \[
-C_- = C(x + r_\tau - r_C, y), \qquad C_+ = C(x + r_\tau + r_C, y)
+C_{-1} = C(x + r_\tau - r_C, y), \qquad C_{+1} = C(x + r_\tau + r_C, y)
+\]
+
+\[
+C_{-2} = C(x + r_\tau - 2r_C, y), \qquad C_{+2} = C(x + r_\tau + 2r_C, y)
 \]
 
 Horizontal chroma blur:
 
 \[
-C_H = 0.25C_- + 0.5C_0 + 0.25C_+
+C_H = 0.14C_{-2} + 0.22C_{-1} + 0.28C_0 + 0.22C_{+1} + 0.14C_{+2}
 \]
 
 Vertical chroma blend:
@@ -359,7 +363,7 @@ C_\uparrow = C(x + r_\tau, y - 1), \qquad C_\downarrow = C(x + r_\tau, y + 1)
 \]
 
 \[
-C_V = 0.25(C_\uparrow + 2C_H + C_\downarrow)
+C_V = 0.2(C_\uparrow + 3C_H + C_\downarrow)
 \]
 
 Final chroma approximation:
@@ -374,13 +378,13 @@ where:
 - \(\beta_V = \texttt{VhsDecodeSettings.chroma\_vertical\_blend}\)
 
 Visual effect:
-color bleeding, softened color edges, and mild luma/chroma misregistration.
+color bleeding, softened color edges, visible chroma resolution loss, and only mild luma/chroma misregistration.
 
 Signal motivation:
 high for lower chroma bandwidth and registration error.
 
 Engineering approximation:
-current still-image v1 uses one delayed, blurred chroma path instead of a full encoded chroma carrier model.
+current still-image v1 uses one delayed, blurred chroma path instead of a full encoded chroma carrier model. The still-path calibration deliberately makes blur stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching.
 
 Pipeline / shader mapping:
 
@@ -463,6 +467,9 @@ Mapping:
 - pipeline projection: `project_vhs_model_to_preview_signal()` converts \(\mu s \to\) reference pixels
 - shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.reconstruction_output.w`
 
+Calibration note:
+the current still-image path keeps transport instability intentionally subordinate to tone shaping, luma softening, and chroma bandwidth loss. This avoids the decorative wobble / glitch-art failure mode that appeared when transport terms were weighted too aggressively relative to the signal-loss stages.
+
 ### 5.2 Additive Noise
 
 The shader uses deterministic hash noise:
@@ -535,25 +542,25 @@ The current single-pass pipeline uses a narrow projection from formal `VhsModel`
 These are engineering approximations, not physical constants:
 
 \[
-p_Y = \min\left(4,\; 1.25 \cdot \frac{\max(0, 4.2 - b_Y)}{1.2}\right)
+p_Y = \min\left(4.5,\; 1.6 \cdot \max(0, 4.2 - b_Y)\right)
 \]
 
 \[
-p_\tau = 13.5 \cdot \tau_C
+p_\tau = 13.5 \cdot 0.4 \cdot \tau_C
 \]
 
 \[
-p_C = \min\left(4,\; \frac{\max(0, 1000 - b_C)}{400}\right)
+p_C = \min\left(4.5,\; \frac{\max(0, 1000 - b_C)}{300}\right)
 \]
 
 \[
-p_J = 13.5 \cdot \tau_J \cdot 0.5
+p_J = 13.5 \cdot \tau_J \cdot 0.22
 \]
 
 \[
-a_Y = \min(1,\; 1.25 \cdot \sigma_Y)
+a_Y = \min(1,\; \sigma_Y)
 \qquad
-a_C = \min(1,\; 0.5 \cdot \sigma_C)
+a_C = \min(1,\; 0.35 \cdot \sigma_C)
 \]
 
 where:
@@ -575,6 +582,9 @@ These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
 
 Important runtime note:
 `StillImagePipeline::from_vhs_model()` uses the full projection above. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), and \(\epsilon_{YC}\) are held at zero unless a formal model is also present.
+
+Current calibration intent:
+the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the fused pass reads as technical analog degradation rather than glitch-oriented distortion art.
 
 ## 8. Explicitly Not Modeled At This Stage
 

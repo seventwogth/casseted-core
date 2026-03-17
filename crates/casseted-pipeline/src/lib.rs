@@ -14,7 +14,8 @@ const BYTES_PER_PIXEL_RGBA8: u32 = 4;
 const EFFECT_UNIFORM_FLOATS: usize = 20;
 const REFERENCE_WIDTH_PX: f32 = 720.0;
 const BT601_SAMPLES_PER_US: f32 = 13.5;
-const STILL_JITTER_ATTENUATION: f32 = 0.5;
+const STILL_JITTER_ATTENUATION: f32 = 0.22;
+const STILL_CHROMA_DELAY_ATTENUATION: f32 = 0.4;
 const REFERENCE_LUMA_BANDWIDTH_MHZ: f32 = 4.2;
 const REFERENCE_CHROMA_BANDWIDTH_KHZ: f32 = 1000.0;
 
@@ -303,7 +304,7 @@ fn project_vhs_model_to_preview_signal(model: VhsModel) -> SignalSettings {
             blur_px: luma_blur_from_bandwidth(model.luma.bandwidth_mhz),
         },
         chroma: ChromaSettings {
-            offset_px: (model.chroma.delay_us.max(0.0) * BT601_SAMPLES_PER_US).max(0.0),
+            offset_px: chroma_offset_from_delay(model.chroma.delay_us),
             bleed_px: chroma_bleed_from_bandwidth(model.chroma.bandwidth_khz),
             saturation: model.chroma.saturation_gain.max(0.0),
         },
@@ -322,24 +323,28 @@ fn line_jitter_px_from_timebase(line_jitter_us: f32) -> f32 {
     (line_jitter_us.max(0.0) * BT601_SAMPLES_PER_US * STILL_JITTER_ATTENUATION).max(0.0)
 }
 
+fn chroma_offset_from_delay(delay_us: f32) -> f32 {
+    (delay_us.max(0.0) * BT601_SAMPLES_PER_US * STILL_CHROMA_DELAY_ATTENUATION).max(0.0)
+}
+
 fn luma_blur_from_bandwidth(bandwidth_mhz: f32) -> f32 {
-    (((REFERENCE_LUMA_BANDWIDTH_MHZ - bandwidth_mhz).max(0.0)) / 1.2 * 1.25).min(4.0)
+    (((REFERENCE_LUMA_BANDWIDTH_MHZ - bandwidth_mhz).max(0.0)) / 1.0 * 1.6).min(4.5)
 }
 
 fn chroma_bleed_from_bandwidth(bandwidth_khz: f32) -> f32 {
-    (((REFERENCE_CHROMA_BANDWIDTH_KHZ - bandwidth_khz).max(0.0)) / 400.0).min(4.0)
+    (((REFERENCE_CHROMA_BANDWIDTH_KHZ - bandwidth_khz).max(0.0)) / 300.0).min(4.5)
 }
 
 fn luma_noise_amount_from_sigma(luma_sigma: f32) -> f32 {
-    (luma_sigma.max(0.0) * 1.25).min(1.0)
+    luma_sigma.clamp(0.0, 1.0)
 }
 
 fn chroma_noise_amount_from_sigma(chroma_sigma: f32) -> f32 {
-    (chroma_sigma.max(0.0) * 0.5).min(1.0)
+    (chroma_sigma.max(0.0) * 0.35).min(1.0)
 }
 
 fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
-    (preemphasis_db.max(0.0) * 0.025).min(0.20)
+    (preemphasis_db.max(0.0) * 0.015).min(0.12)
 }
 
 fn validate_input_image(input: &ImageFrame) -> Result<(), PipelineError> {
@@ -704,9 +709,9 @@ mod tests {
         let pipeline = StillImagePipeline::default();
 
         assert_eq!(pipeline.model, Some(VhsModel::default()));
-        assert_eq!(pipeline.signal.tone.highlight_soft_knee, 0.72);
-        assert!(pipeline.signal.chroma.offset_px > 1.0);
-        assert!(pipeline.signal.luma.blur_px > 0.0);
+        assert_eq!(pipeline.signal.tone.highlight_soft_knee, 0.64);
+        assert!((pipeline.signal.chroma.offset_px - 0.324).abs() < 1e-6);
+        assert!((pipeline.signal.luma.blur_px - 1.92).abs() < 1e-6);
     }
 
     #[test]
@@ -725,10 +730,10 @@ mod tests {
         let pipeline = StillImagePipeline::default();
         let uniforms = effect_uniforms(&input, pipeline.signal, pipeline.model);
 
-        assert!((uniforms.input_conditioning[0] - 0.72).abs() < 1e-6);
-        assert!((uniforms.luma_degradation[1] - 0.075).abs() < 1e-6);
-        assert!((uniforms.chroma_degradation[3] - 0.25).abs() < 1e-6);
-        assert!((uniforms.reconstruction_output[2] - 0.05).abs() < 1e-6);
+        assert!((uniforms.input_conditioning[0] - 0.64).abs() < 1e-6);
+        assert!((uniforms.luma_degradation[1] - 0.045).abs() < 1e-6);
+        assert!((uniforms.chroma_degradation[3] - 0.35).abs() < 1e-6);
+        assert!((uniforms.reconstruction_output[2] - 0.02).abs() < 1e-6);
     }
 
     #[test]
