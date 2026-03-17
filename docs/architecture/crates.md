@@ -28,7 +28,7 @@ The formal layer is grouped by signal responsibility:
 - noise and corruption
 - decode / reconstruction
 
-The compact layer is deliberately smaller and only covers the currently fused still-pass controls.
+The compact layer is deliberately smaller and only covers the current still-image preview controls.
 Those compact controls now map more explicitly onto the five implementation stages used by the still pipeline, without becoming a second full domain model.
 
 ## `casseted-shaderlib`
@@ -49,7 +49,7 @@ Those compact controls now map more explicitly onto the five implementation stag
 - `wgpu` execution from `casseted-gpu`
 
 Important change in the current phase:
-this crate now contains a narrow projection from the formal signal model into five explicit implementation stages for the current still path, and then packs those stages into one fused WGSL pass. It still does not become a graph engine.
+this crate now contains a narrow projection from the formal signal model into five explicit implementation stages for the current still path, and then packs those stages into one shared uniform block used by four fixed WGSL passes. It still does not become a graph engine.
 
 ## `casseted-cli`
 

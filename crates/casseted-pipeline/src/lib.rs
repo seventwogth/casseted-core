@@ -12,6 +12,7 @@ use std::sync::mpsc;
 
 const BYTES_PER_PIXEL_RGBA8: u32 = 4;
 const EFFECT_UNIFORM_FLOATS: usize = 20;
+const INTERMEDIATE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const REFERENCE_WIDTH_PX: f32 = 720.0;
 const BT601_SAMPLES_PER_US: f32 = 13.5;
 const STILL_JITTER_ATTENUATION: f32 = 0.22;
@@ -33,12 +34,17 @@ const PREVIEW_LINE_JITTER_RECOMMENDED_CAP: f32 = 0.35;
 const PREVIEW_LINE_JITTER_HARD_CAP: f32 = 0.55;
 const PREVIEW_VERTICAL_OFFSET_RECOMMENDED_CAP: f32 = 0.35;
 const PREVIEW_VERTICAL_OFFSET_HARD_CAP: f32 = 0.75;
+const STILL_PIPELINE_SHADER_IDS: [ShaderId; 4] = [
+    ShaderId::StillInputConditioning,
+    ShaderId::StillLumaDegradation,
+    ShaderId::StillChromaDegradation,
+    ShaderId::StillReconstructionOutput,
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StillImagePipeline {
     pub model: Option<VhsModel>,
     pub signal: SignalSettings,
-    pub shader_id: ShaderId,
 }
 
 impl StillImagePipeline {
@@ -46,7 +52,6 @@ impl StillImagePipeline {
         Self {
             model: None,
             signal,
-            shader_id: ShaderId::StillAnalog,
         }
     }
 
@@ -54,12 +59,15 @@ impl StillImagePipeline {
         Self {
             model: Some(model),
             signal: project_vhs_model_to_preview_signal(model),
-            shader_id: ShaderId::StillAnalog,
         }
     }
 
     pub fn effective_preview_signal(&self) -> SignalSettings {
         effective_preview_signal(self.signal, self.model)
+    }
+
+    pub fn shader_ids(&self) -> &'static [ShaderId] {
+        &STILL_PIPELINE_SHADER_IDS
     }
 
     pub fn process_blocking(&self, input: &ImageFrame) -> Result<ImageFrame, PipelineError> {
@@ -77,126 +85,116 @@ impl StillImagePipeline {
         validate_input_image(input)?;
 
         let texture_size = input.descriptor.size;
+        let uniform_bytes = effect_uniform_bytes(input, self.signal, self.model);
         let input_texture = create_input_texture(context, input);
         let input_view = input_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let working_texture = create_pipeline_texture(
+            context,
+            texture_size,
+            INTERMEDIATE_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            "casseted-still-image-working-signal",
+        );
+        let working_view = working_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let luma_texture = create_pipeline_texture(
+            context,
+            texture_size,
+            INTERMEDIATE_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            "casseted-still-image-luma-signal",
+        );
+        let luma_view = luma_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let chroma_texture = create_pipeline_texture(
+            context,
+            texture_size,
+            INTERMEDIATE_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            "casseted-still-image-chroma-signal",
+        );
+        let chroma_view = chroma_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let output_texture = create_output_texture(context, texture_size);
+        let output_texture = create_pipeline_texture(
+            context,
+            texture_size,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            "casseted-still-image-output",
+        );
         let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("casseted-still-image-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..wgpu::SamplerDescriptor::default()
-        });
-
-        let uniform_bytes =
-            effect_uniform_bytes(input, self.effective_preview_signal(), self.model);
-        let uniform_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("casseted-still-image-uniforms"),
-            size: uniform_bytes.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let sampler = create_linear_sampler(context);
+        let uniform_buffer = create_uniform_buffer(context, &uniform_bytes);
         context
             .queue
             .write_buffer(&uniform_buffer, 0, &uniform_bytes);
 
-        let bind_group_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("casseted-still-image-bind-group-layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                multisampled: false,
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
-                });
+        let single_texture_layout =
+            create_single_texture_bind_group_layout(context, "casseted-still-image-single-input");
+        let dual_texture_layout =
+            create_dual_texture_bind_group_layout(context, "casseted-still-image-dual-input");
 
-        let bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("casseted-still-image-bind-group"),
-                layout: &bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+        let conditioning_bind_group = create_single_texture_bind_group(
+            context,
+            &single_texture_layout,
+            &input_view,
+            &sampler,
+            &uniform_buffer,
+            "casseted-still-image-conditioning-bind-group",
+        );
+        let luma_bind_group = create_single_texture_bind_group(
+            context,
+            &single_texture_layout,
+            &working_view,
+            &sampler,
+            &uniform_buffer,
+            "casseted-still-image-luma-bind-group",
+        );
+        let chroma_bind_group = create_single_texture_bind_group(
+            context,
+            &single_texture_layout,
+            &working_view,
+            &sampler,
+            &uniform_buffer,
+            "casseted-still-image-chroma-bind-group",
+        );
+        let reconstruction_bind_group = create_dual_texture_bind_group(
+            context,
+            &dual_texture_layout,
+            &luma_view,
+            &chroma_view,
+            &sampler,
+            &uniform_buffer,
+            "casseted-still-image-reconstruction-bind-group",
+        );
 
-        let shader = shader_source(self.shader_id);
-        let shader = context.create_shader_module(Some(shader.label), shader.source);
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("casseted-still-image-pipeline-layout"),
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-        let render_pipeline =
-            context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("casseted-still-image-pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview: None,
-                });
+        let conditioning_pipeline = create_render_pipeline(
+            context,
+            ShaderId::StillInputConditioning,
+            &[&single_texture_layout],
+            INTERMEDIATE_TEXTURE_FORMAT,
+            "casseted-still-image-conditioning-pipeline",
+        );
+        let luma_pipeline = create_render_pipeline(
+            context,
+            ShaderId::StillLumaDegradation,
+            &[&single_texture_layout],
+            INTERMEDIATE_TEXTURE_FORMAT,
+            "casseted-still-image-luma-pipeline",
+        );
+        let chroma_pipeline = create_render_pipeline(
+            context,
+            ShaderId::StillChromaDegradation,
+            &[&single_texture_layout],
+            INTERMEDIATE_TEXTURE_FORMAT,
+            "casseted-still-image-chroma-pipeline",
+        );
+        let reconstruction_pipeline = create_render_pipeline(
+            context,
+            ShaderId::StillReconstructionOutput,
+            &[&dual_texture_layout],
+            wgpu::TextureFormat::Rgba8Unorm,
+            "casseted-still-image-reconstruction-pipeline",
+        );
 
         let padded_bytes_per_row = padded_bytes_per_row(texture_size.width);
         let output_buffer_size = padded_bytes_per_row as u64 * texture_size.height as u64;
@@ -213,25 +211,34 @@ impl StillImagePipeline {
                 label: Some("casseted-still-image-encoder"),
             });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("casseted-still-image-model-fused-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-            render_pass.set_pipeline(&render_pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
-        }
+        encode_fullscreen_pass(
+            &mut encoder,
+            &conditioning_pipeline,
+            &conditioning_bind_group,
+            &working_view,
+            "casseted-still-image-input-conditioning-pass",
+        );
+        encode_fullscreen_pass(
+            &mut encoder,
+            &luma_pipeline,
+            &luma_bind_group,
+            &luma_view,
+            "casseted-still-image-luma-degradation-pass",
+        );
+        encode_fullscreen_pass(
+            &mut encoder,
+            &chroma_pipeline,
+            &chroma_bind_group,
+            &chroma_view,
+            "casseted-still-image-chroma-degradation-pass",
+        );
+        encode_fullscreen_pass(
+            &mut encoder,
+            &reconstruction_pipeline,
+            &reconstruction_bind_group,
+            &output_view,
+            "casseted-still-image-reconstruction-pass",
+        );
 
         encoder.copy_texture_to_buffer(
             output_texture.as_image_copy(),
@@ -469,16 +476,13 @@ fn validate_input_image(input: &ImageFrame) -> Result<(), PipelineError> {
 
 fn create_input_texture(context: &GpuContext, input: &ImageFrame) -> wgpu::Texture {
     let size = texture_extent(input.descriptor.size);
-    let texture = context.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("casseted-still-image-input"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    let texture = create_pipeline_texture(
+        context,
+        input.descriptor.size,
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "casseted-still-image-input",
+    );
 
     context.queue.write_texture(
         texture.as_image_copy(),
@@ -494,17 +498,267 @@ fn create_input_texture(context: &GpuContext, input: &ImageFrame) -> wgpu::Textu
     texture
 }
 
-fn create_output_texture(context: &GpuContext, size: FrameSize) -> wgpu::Texture {
+fn create_pipeline_texture(
+    context: &GpuContext,
+    size: FrameSize,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+    label: &'static str,
+) -> wgpu::Texture {
     context.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("casseted-still-image-output"),
+        label: Some(label),
         size: texture_extent(size),
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        format,
+        usage,
         view_formats: &[],
     })
+}
+
+fn create_linear_sampler(context: &GpuContext) -> wgpu::Sampler {
+    context.device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("casseted-still-image-sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..wgpu::SamplerDescriptor::default()
+    })
+}
+
+fn create_uniform_buffer(context: &GpuContext, uniform_bytes: &[u8]) -> wgpu::Buffer {
+    context.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("casseted-still-image-uniforms"),
+        size: uniform_bytes.len() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_single_texture_bind_group_layout(
+    context: &GpuContext,
+    label: &'static str,
+) -> wgpu::BindGroupLayout {
+    context
+        .device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(label),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        })
+}
+
+fn create_dual_texture_bind_group_layout(
+    context: &GpuContext,
+    label: &'static str,
+) -> wgpu::BindGroupLayout {
+    context
+        .device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(label),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        })
+}
+
+fn create_single_texture_bind_group(
+    context: &GpuContext,
+    layout: &wgpu::BindGroupLayout,
+    texture_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    uniform_buffer: &wgpu::Buffer,
+    label: &'static str,
+) -> wgpu::BindGroup {
+    context
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        })
+}
+
+fn create_dual_texture_bind_group(
+    context: &GpuContext,
+    layout: &wgpu::BindGroupLayout,
+    first_texture_view: &wgpu::TextureView,
+    second_texture_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    uniform_buffer: &wgpu::Buffer,
+    label: &'static str,
+) -> wgpu::BindGroup {
+    context
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(first_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(second_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        })
+}
+
+fn create_render_pipeline(
+    context: &GpuContext,
+    shader_id: ShaderId,
+    bind_group_layouts: &[&wgpu::BindGroupLayout],
+    target_format: wgpu::TextureFormat,
+    label: &'static str,
+) -> wgpu::RenderPipeline {
+    let shader_source = shader_source(shader_id);
+    let shader = context.create_shader_module(Some(shader_source.label), shader_source.source);
+    let pipeline_layout = context
+        .device
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts,
+            push_constant_ranges: &[],
+        });
+
+    context
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+        })
+}
+
+fn encode_fullscreen_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::RenderPipeline,
+    bind_group: &wgpu::BindGroup,
+    target_view: &wgpu::TextureView,
+    label: &'static str,
+) {
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+    render_pass.set_pipeline(pipeline);
+    render_pass.set_bind_group(0, bind_group, &[]);
+    render_pass.draw(0..3, 0..1);
 }
 
 fn texture_extent(size: FrameSize) -> wgpu::Extent3d {
@@ -541,8 +795,8 @@ fn strip_padding(data: &[u8], width: u32, height: u32, padded_bytes_per_row: u32
     output
 }
 
-// The still-image path stays single-pass at runtime, but resolves its controls
-// through explicit logical stages before packing the WGSL uniform block.
+// The still-image path resolves controls into explicit logical stages and then
+// packs them into a shared uniform block used across the compact multi-pass run.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ResolvedStillStages {
     frame: FrameStage,
@@ -782,6 +1036,7 @@ mod tests {
         resolve_still_stages,
     };
     use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
+    use casseted_shaderlib::ShaderId;
     use casseted_signal::{
         ChromaSettings, NoiseSettings, SignalSettings, TrackingSettings, VhsModel,
     };
@@ -789,10 +1044,18 @@ mod tests {
     use casseted_types::FrameSize;
 
     #[test]
-    fn pipeline_uses_still_analog_shader() {
+    fn pipeline_uses_expected_multi_pass_shaders() {
         let pipeline = StillImagePipeline::default();
 
-        assert_eq!(pipeline.shader_id.label(), "still_analog");
+        assert_eq!(
+            pipeline.shader_ids(),
+            &[
+                ShaderId::StillInputConditioning,
+                ShaderId::StillLumaDegradation,
+                ShaderId::StillChromaDegradation,
+                ShaderId::StillReconstructionOutput,
+            ]
+        );
     }
 
     #[test]

@@ -70,7 +70,7 @@ R'G'B' input
   -> reconstruct output RGB
 ```
 
-The stage order is canonical even if a concrete GPU implementation fuses several stages into one pass.
+The stage order is canonical even if a concrete GPU implementation groups or fuses several stages for a compact runtime.
 
 ## Current Implementation Grouping
 
@@ -82,21 +82,20 @@ The current still-image implementation keeps the formal eight-stage order above,
 4. chroma degradation
 5. reconstruction / output
 
-Current mapping:
+Those stages now execute through a limited four-pass runtime:
 
-| Implementation stage | Formal v1 stages included | Current WGSL pass |
-| --- | --- | --- |
-| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, plus the currently spatial subset of `TransportInstability` | fused into `still_analog.wgsl` |
-| Luma/chroma transform | `RgbToLumaChroma` | fused into `still_analog.wgsl` |
-| Luma degradation | `LumaRecordPath` | fused into `still_analog.wgsl` |
-| Chroma degradation | `ChromaRecordPath` | fused into `still_analog.wgsl` |
-| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | fused into `still_analog.wgsl` |
+| Physical pass | Implementation stages covered | Formal v1 stages included | Current WGSL pass |
+| --- | --- | --- | --- |
+| Input conditioning pass | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, plus the currently spatial subset of `TransportInstability` | `still_input_conditioning.wgsl` |
+| Luma pass | luma degradation | `LumaRecordPath` | `still_luma_degradation.wgsl` |
+| Chroma pass | chroma degradation | `ChromaRecordPath` | `still_chroma_degradation.wgsl` |
+| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
 
 Why this grouping is used now:
 
-- it keeps the runtime compact and preserves the working one-pass path
-- it makes the code read in stage order instead of as one monolithic fragment body
-- it gives later WGSL work clear upgrade points without introducing a render graph early
+- it creates one explicit working-signal fan-out point after tone shaping
+- it gives luma and chroma separate physical branches without introducing a render graph
+- it keeps noise and decode fused so the orchestration stays compact for still-image work
 
 ## Visual Regression Mapping
 
@@ -104,17 +103,17 @@ The current visual regression foundation keeps one committed source image plus o
 
 | Implementation stage | Formulas reference | Uniform focus | WGSL entry points | Reference PNG |
 | --- | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `apply_input_conditioning()`, `apply_tone_shaping()` | `input-conditioning-tone.png` |
-| Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the fused working path | `sample_working_signal()` | `luma-chroma-transform.png` |
+| Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `conditioned_sample_uv()`, `apply_tone_shaping()` | `input-conditioning-tone.png` |
+| Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the working-signal fan-out path | `rgb_to_yuv()` in `still_input_conditioning.wgsl` | `luma-chroma-transform.png` |
 | Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()` | `luma-degradation.png` |
 | Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | `chroma-degradation.png` |
 | Reconstruction / output | `4.5` plus noise note in `5.2` | `effect.reconstruction_output` | `sample_output_noise()`, `reconstruct_output()` | `reconstruction-output.png` |
 
 Current fixture policy:
 
-- reference comparisons use fixed tolerances for the fused pass outputs
+- reference comparisons use fixed tolerances for the compact multi-pass outputs
 - stage tests also verify resolved defaults and bounded output changes under small parameter perturbations
-- the pipeline remains single-pass; these fixtures describe logical stages inside that one pass, not separate intermediate textures
+- fixtures remain stage-oriented end-to-end outputs; they do not introduce a separate intermediate-texture review tool at this phase
 
 ## Stage Intent
 
@@ -237,16 +236,20 @@ The compact still-preview layer in `SignalSettings` remains intentionally smalle
 - `NoiseSettings`
 - `TrackingSettings`
 
-That preview layer is not a competing domain model. It is a narrow control surface for the current single-pass implementation.
+That preview layer is not a competing domain model. It is a narrow control surface for the current still-image implementation.
 
 ## Mapping To The Current Pipeline
 
-The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the fused still-pass implementation:
+The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the limited multi-pass still implementation:
 
 - `StillImagePipeline::from_vhs_model()` creates the current still-preview configuration from a formal `VhsModel`
 - `project_vhs_model_to_preview_signal()` converts the formal model into compact preview controls
 - `resolve_still_stages()` groups those controls into the five implementation stages
-- `EffectUniforms` packs those stage controls into the WGSL uniform block used by `shaders/passes/still_analog.wgsl`
+- `EffectUniforms` packs those stage controls into the shared WGSL uniform block used by the four still passes
+- the runtime writes three intermediate textures:
+  working YUV,
+  degraded luma,
+  degraded chroma
 
 There are two intentional modes:
 
@@ -294,7 +297,7 @@ Current preview guardrails for manual / override-driven `SignalSettings`:
 
 ## Current Visual Calibration Priorities
 
-The current fused still-image implementation is intentionally not balanced equally across all formal stages. For the current phase, the visual priority is:
+The current limited multi-pass still-image implementation is intentionally not balanced equally across all formal stages. For the current phase, the visual priority is:
 
 - tone rolloff and soft highlight compression
 - luma softness and microcontrast loss
@@ -308,7 +311,7 @@ Why this changed:
 - that pushed the result toward glitch-like distortion art instead of signal degradation
 - the current calibration therefore strengthens bandwidth-loss proxies and attenuates transport / delay proxies
 
-Scene-level calibration notes for the current single-pass path:
+Scene-level calibration notes for the current limited multi-pass path:
 
 - text and hard verticals should soften and halo slightly before they wobble
 - neutral surfaces should show chroma softness before obvious hue splitting
@@ -318,14 +321,13 @@ Scene-level calibration notes for the current single-pass path:
 
 ## Implementation Status
 
-The current repository now implements a reference-consistent subset of v1 as five logical stages fused into one WGSL pass:
+The current repository now implements a reference-consistent subset of v1 as five logical stages executed through four WGSL passes:
 
-- input conditioning / tone shaping with a stronger soft-knee shoulder
-- `RGB -> YUV` decomposition
+- input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma low-pass/detail attenuation biased toward microcontrast loss
 - chroma delay/blur/saturation degradation biased toward blur over misregistration
-- reconstruction back to RGB
-- line jitter and additive noise as integrated but restrained secondary terms
+- reconstruction back to RGB with additive noise and restrained Y/C leakage
+- line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 
 Still deferred:
 
@@ -333,7 +335,7 @@ Still deferred:
 - dropouts
 - head switching behavior
 - temporal model
-- multi-pass separation of luma/chroma textures
+- render-graph planning
 - video support
 
 ## Consequence
@@ -342,8 +344,8 @@ The next step is to extend this signal-model-aligned subset deliberately, not to
 
 The likely next implementation moves are:
 
-- separate or strengthen the chroma degradation path
-- add a more explicit transport/dropout stage
-- decide when single-pass fusion stops being clearer than limited multi-pass staging
+- refine luma and chroma branch behavior inside the current pass structure
+- add a more explicit transport/dropout stage if the still-image work starts to justify it
+- improve resource reuse and calibration workflow without changing the domain contract
 
 All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).

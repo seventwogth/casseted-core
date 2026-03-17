@@ -2,19 +2,28 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderId {
-    StillAnalog,
+    StillInputConditioning,
+    StillLumaDegradation,
+    StillChromaDegradation,
+    StillReconstructionOutput,
 }
 
 impl ShaderId {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::StillAnalog => "still_analog",
+            Self::StillInputConditioning => "still_input_conditioning",
+            Self::StillLumaDegradation => "still_luma_degradation",
+            Self::StillChromaDegradation => "still_chroma_degradation",
+            Self::StillReconstructionOutput => "still_reconstruction_output",
         }
     }
 
     pub const fn relative_path(self) -> &'static str {
         match self {
-            Self::StillAnalog => "shaders/passes/still_analog.wgsl",
+            Self::StillInputConditioning => "shaders/passes/still_input_conditioning.wgsl",
+            Self::StillLumaDegradation => "shaders/passes/still_luma_degradation.wgsl",
+            Self::StillChromaDegradation => "shaders/passes/still_chroma_degradation.wgsl",
+            Self::StillReconstructionOutput => "shaders/passes/still_reconstruction_output.wgsl",
         }
     }
 }
@@ -27,14 +36,40 @@ pub struct ShaderSource {
     pub source: &'static str,
 }
 
-pub const STILL_ANALOG_SHADER: ShaderSource = ShaderSource {
-    id: ShaderId::StillAnalog,
-    label: "still_analog",
-    relative_path: "shaders/passes/still_analog.wgsl",
-    source: include_str!("../../../shaders/passes/still_analog.wgsl"),
+pub const STILL_INPUT_CONDITIONING_SHADER: ShaderSource = ShaderSource {
+    id: ShaderId::StillInputConditioning,
+    label: "still_input_conditioning",
+    relative_path: "shaders/passes/still_input_conditioning.wgsl",
+    source: include_str!("../../../shaders/passes/still_input_conditioning.wgsl"),
 };
 
-pub const BUILTIN_SHADERS: [ShaderSource; 1] = [STILL_ANALOG_SHADER];
+pub const STILL_LUMA_DEGRADATION_SHADER: ShaderSource = ShaderSource {
+    id: ShaderId::StillLumaDegradation,
+    label: "still_luma_degradation",
+    relative_path: "shaders/passes/still_luma_degradation.wgsl",
+    source: include_str!("../../../shaders/passes/still_luma_degradation.wgsl"),
+};
+
+pub const STILL_CHROMA_DEGRADATION_SHADER: ShaderSource = ShaderSource {
+    id: ShaderId::StillChromaDegradation,
+    label: "still_chroma_degradation",
+    relative_path: "shaders/passes/still_chroma_degradation.wgsl",
+    source: include_str!("../../../shaders/passes/still_chroma_degradation.wgsl"),
+};
+
+pub const STILL_RECONSTRUCTION_OUTPUT_SHADER: ShaderSource = ShaderSource {
+    id: ShaderId::StillReconstructionOutput,
+    label: "still_reconstruction_output",
+    relative_path: "shaders/passes/still_reconstruction_output.wgsl",
+    source: include_str!("../../../shaders/passes/still_reconstruction_output.wgsl"),
+};
+
+pub const BUILTIN_SHADERS: [ShaderSource; 4] = [
+    STILL_INPUT_CONDITIONING_SHADER,
+    STILL_LUMA_DEGRADATION_SHADER,
+    STILL_CHROMA_DEGRADATION_SHADER,
+    STILL_RECONSTRUCTION_OUTPUT_SHADER,
+];
 
 pub fn builtin_shaders() -> &'static [ShaderSource] {
     &BUILTIN_SHADERS
@@ -42,38 +77,89 @@ pub fn builtin_shaders() -> &'static [ShaderSource] {
 
 pub fn shader_source(id: ShaderId) -> ShaderSource {
     match id {
-        ShaderId::StillAnalog => STILL_ANALOG_SHADER,
+        ShaderId::StillInputConditioning => STILL_INPUT_CONDITIONING_SHADER,
+        ShaderId::StillLumaDegradation => STILL_LUMA_DEGRADATION_SHADER,
+        ShaderId::StillChromaDegradation => STILL_CHROMA_DEGRADATION_SHADER,
+        ShaderId::StillReconstructionOutput => STILL_RECONSTRUCTION_OUTPUT_SHADER,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BUILTIN_SHADERS, STILL_ANALOG_SHADER, ShaderId, shader_source};
+    use super::{
+        BUILTIN_SHADERS, STILL_CHROMA_DEGRADATION_SHADER, STILL_INPUT_CONDITIONING_SHADER,
+        STILL_LUMA_DEGRADATION_SHADER, STILL_RECONSTRUCTION_OUTPUT_SHADER, ShaderId, shader_source,
+    };
 
     #[test]
-    fn embedded_shader_is_not_empty() {
-        assert!(STILL_ANALOG_SHADER.source.contains("@vertex"));
+    fn embedded_shaders_are_not_empty() {
+        for shader in BUILTIN_SHADERS {
+            assert!(shader.source.contains("@vertex"));
+            assert!(shader.source.contains("@fragment"));
+        }
     }
 
     #[test]
     fn shader_lookup_by_id_returns_expected_asset() {
-        let shader = shader_source(ShaderId::StillAnalog);
+        let cases = [
+            (
+                ShaderId::StillInputConditioning,
+                "still_input_conditioning",
+                "shaders/passes/still_input_conditioning.wgsl",
+            ),
+            (
+                ShaderId::StillLumaDegradation,
+                "still_luma_degradation",
+                "shaders/passes/still_luma_degradation.wgsl",
+            ),
+            (
+                ShaderId::StillChromaDegradation,
+                "still_chroma_degradation",
+                "shaders/passes/still_chroma_degradation.wgsl",
+            ),
+            (
+                ShaderId::StillReconstructionOutput,
+                "still_reconstruction_output",
+                "shaders/passes/still_reconstruction_output.wgsl",
+            ),
+        ];
 
-        assert_eq!(shader.label, "still_analog");
-        assert_eq!(shader.relative_path, "shaders/passes/still_analog.wgsl");
+        for (id, label, relative_path) in cases {
+            let shader = shader_source(id);
+            assert_eq!(shader.label, label);
+            assert_eq!(shader.relative_path, relative_path);
+        }
     }
 
     #[test]
-    fn builtin_registry_contains_still_analog() {
+    fn builtin_registry_contains_expected_passes() {
+        assert!(BUILTIN_SHADERS.contains(&STILL_INPUT_CONDITIONING_SHADER));
+        assert!(BUILTIN_SHADERS.contains(&STILL_LUMA_DEGRADATION_SHADER));
+        assert!(BUILTIN_SHADERS.contains(&STILL_CHROMA_DEGRADATION_SHADER));
+        assert!(BUILTIN_SHADERS.contains(&STILL_RECONSTRUCTION_OUTPUT_SHADER));
+    }
+
+    #[test]
+    fn embedded_shaders_contain_expected_ops() {
         assert!(
-            BUILTIN_SHADERS
-                .iter()
-                .any(|shader| shader.id == ShaderId::StillAnalog)
+            STILL_INPUT_CONDITIONING_SHADER
+                .source
+                .contains("conditioned_sample_uv")
         );
-    }
-
-    #[test]
-    fn embedded_shader_contains_fragment_entrypoint() {
-        assert!(STILL_ANALOG_SHADER.source.contains("textureSample"));
+        assert!(
+            STILL_LUMA_DEGRADATION_SHADER
+                .source
+                .contains("degrade_luma")
+        );
+        assert!(
+            STILL_CHROMA_DEGRADATION_SHADER
+                .source
+                .contains("degrade_chroma")
+        );
+        assert!(
+            STILL_RECONSTRUCTION_OUTPUT_SHADER
+                .source
+                .contains("reconstruct_output")
+        );
     }
 }

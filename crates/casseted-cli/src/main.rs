@@ -109,7 +109,15 @@ fn run(args: Vec<String>) -> Result<(), CliError> {
 
     println!("input:  {}", cli.input.display());
     println!("output: {}", cli.output.display());
-    println!("shader: {}", pipeline.shader_id.label());
+    println!(
+        "passes: {}",
+        pipeline
+            .shader_ids()
+            .iter()
+            .map(|shader| shader.label())
+            .collect::<Vec<_>>()
+            .join(" -> ")
+    );
     let mut guardrail_changes = Vec::new();
     if pipeline.signal.luma.blur_px != effective_signal.luma.blur_px {
         guardrail_changes.push("luma_blur");

@@ -542,6 +542,14 @@ fn case_metadata_covers_formulas_sections() {
             "{} should map to a formulas section",
             case.key()
         );
-        assert_eq!(case.build_pipeline().shader_id, ShaderId::StillAnalog);
+        assert_eq!(
+            case.build_pipeline().shader_ids(),
+            &[
+                ShaderId::StillInputConditioning,
+                ShaderId::StillLumaDegradation,
+                ShaderId::StillChromaDegradation,
+                ShaderId::StillReconstructionOutput,
+            ]
+        );
     }
 }

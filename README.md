@@ -28,7 +28,7 @@ The main layer boundary is intentionally simple:
 
 - `casseted-shaderlib` owns repository shader assets
 - `casseted-gpu` owns low-level runtime setup
-- `casseted-pipeline` is the layer that bridges the two for real processing and currently resolves the still path into five logical implementation stages inside one fused pass
+- `casseted-pipeline` is the layer that bridges the two for real processing and currently resolves the still path into five logical implementation stages across a compact four-pass runtime
 
 ## Repository layout
 
@@ -58,13 +58,17 @@ The workspace now acts as a clean first milestone plus the first algorithmic sig
 The current still-image path is deliberately compact:
 
 - five logical implementation stages
-- one WGSL render pass
-- no render graph or multi-pass orchestration yet
+- four WGSL render passes with three intermediate textures
+- no render graph or plugin-style orchestration
 
 The current implementation path is anchored by:
 
 - [`docs/architecture/signal-model-v1.md`](./docs/architecture/signal-model-v1.md)
 - [`docs/math/signal-model-v1-formulas.md`](./docs/math/signal-model-v1-formulas.md)
+
+Agent stage log:
+
+- [`docs/agent-log/0001-limited-multi-pass-transition.md`](./docs/agent-log/0001-limited-multi-pass-transition.md)
 
 ## CLI
 
@@ -87,8 +91,8 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
-- the current single-pass calibration emphasizes tone shoulder, luma softness, and chroma bandwidth loss ahead of jitter-heavy distortion
-- aggressive manual overrides are softened into effective preview ranges before the WGSL pass runs
+- the current limited multi-pass calibration emphasizes tone shoulder, luma softness, and chroma bandwidth loss ahead of jitter-heavy distortion
+- aggressive manual overrides are softened into effective preview ranges before the WGSL passes run
 - when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
 
 ## Testing
@@ -98,4 +102,5 @@ Current testing is intentionally lightweight:
 - unit tests for domain and support crates
 - GPU smoke tests for the still-image pipeline
 - a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
+- committed stage-oriented PNG fixtures for the current limited multi-pass still path
 - shared helpers in [`docs/testing.md`](./docs/testing.md)

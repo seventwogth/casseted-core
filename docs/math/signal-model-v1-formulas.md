@@ -13,7 +13,10 @@ It is intentionally narrower than a full VHS deck model. The goal is to define t
 The current GPU implementation lives in:
 
 - `crates/casseted-pipeline/src/lib.rs`
-- `shaders/passes/still_analog.wgsl`
+- `shaders/passes/still_input_conditioning.wgsl`
+- `shaders/passes/still_luma_degradation.wgsl`
+- `shaders/passes/still_chroma_degradation.wgsl`
+- `shaders/passes/still_reconstruction_output.wgsl`
 
 ## 1. Scope
 
@@ -25,21 +28,20 @@ The implemented still-image subset is:
 4. chroma horizontal delay + chroma blur + optional vertical chroma blend
 5. `YUV -> RGB` reconstruction with a small Y/C leakage term and additive luma/chroma noise
 
-The current implementation keeps those stages in one render pass, but names them explicitly in code through:
+The current implementation keeps those stages in a compact four-pass runtime and names them explicitly in code through:
 
 - `resolve_still_stages()` in `casseted-pipeline`
 - stage-aligned uniform groups in `EffectUniforms`
-- stage helper functions in `still_analog.wgsl`
+- stage helper functions across the four still-image WGSL passes
 
 ### Current Implementation Stage Layout
 
-| Implementation stage | Formal v1 stage coverage | Current code / shader entry points | Current pass boundary |
+| Physical pass | Logical implementation stages covered | Current code / shader entry points | Current pass boundary |
 | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `InputDecode`, `ToneShaping`, spatial still-frame subset of `TransportInstability` | `resolve_input_conditioning_stage()`, `apply_input_conditioning()`, `apply_tone_shaping()` | fused into `still_analog.wgsl` |
-| Luma/chroma transform | `RgbToLumaChroma` | `sample_working_signal()` | fused into `still_analog.wgsl` |
-| Luma degradation | `LumaRecordPath` | `resolve_luma_degradation_stage()`, `degrade_luma()` | fused into `still_analog.wgsl` |
-| Chroma degradation | `ChromaRecordPath` | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | fused into `still_analog.wgsl` |
-| Reconstruction / output | `NoiseAndDropouts` (noise-only subset) and `DecodeOutput` | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | fused into `still_analog.wgsl` |
+| `still_input_conditioning` | input conditioning / tone shaping + luma/chroma transform | `resolve_input_conditioning_stage()`, `conditioned_sample_uv()`, `apply_tone_shaping()`, `rgb_to_yuv()` | one working-signal pass |
+| `still_luma_degradation` | luma degradation | `resolve_luma_degradation_stage()`, `degrade_luma()` | one luma branch pass |
+| `still_chroma_degradation` | chroma degradation | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | one chroma branch pass |
+| `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `reconstruct_output()` | one final output pass |
 
 ### Current Visual Regression Fixtures
 
@@ -59,7 +61,7 @@ Current committed output tolerance for those PNG comparisons:
 - `max_mean_absolute_difference = 0.35`
 - `max_absolute_difference = 3`
 
-Those tolerances are intentionally small enough to catch behavioral regressions while still allowing minor backend-level float differences in the fused pass.
+Those tolerances are intentionally small enough to catch behavioral regressions while still allowing minor backend-level float differences in the compact multi-pass path.
 
 ## 2. Notation And Variables
 
@@ -112,7 +114,7 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 
 ### Current range rules used by stage verification
 
-| Uniform term | Current rule in the single-pass implementation |
+| Uniform term | Current rule in the still-image implementation |
 | --- | --- |
 | `effect.input_conditioning.x` | `highlight_soft_knee` clamped to `[0, 0.999]` |
 | `effect.input_conditioning.y` | `highlight_compression >= 0` |
@@ -150,7 +152,7 @@ Engineering approximation:
 `sRGB` input is accepted directly and converted to a BT.601-like working representation in shader code.
 
 Pipeline mapping:
-fused into `sample_working_signal()` inside `shaders/passes/still_analog.wgsl`.
+executed in `shaders/passes/still_input_conditioning.wgsl`, which writes the working YUV texture used by the later luma/chroma passes.
 
 ### Working representation
 
@@ -168,7 +170,7 @@ Why this representation is used in v1:
 
 - it separates detail-carrying luma from visibly lower-fidelity chroma
 - it maps directly to the most important still-image analog degradations
-- it keeps the implementation compact enough for a single-pass MVP
+- it keeps the implementation compact enough for the current still-image MVP
 
 ## 4. Implemented Stages
 
@@ -222,7 +224,7 @@ Pipeline / shader mapping:
 - domain parameter group: `VhsToneSettings`
 - current still controls: `SignalSettings.tone`
 - stage-aligned uniform group: `effect.input_conditioning.xy`
-- shader implementation: `apply_input_conditioning()`, `soft_highlight_knee()`, and `apply_tone_shaping()`
+- shader implementation: `conditioned_sample_uv()`, `soft_highlight_knee()`, and `apply_tone_shaping()`
 
 ### 4.2 Luma / Chroma Decomposition
 
@@ -244,7 +246,7 @@ the working representation is BT.601-like rather than a deck-accurate encode/dec
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::RgbToLumaChroma`
-- shader implementation: `rgb_to_yuv()` inside `sample_working_signal()`
+- shader implementation: `rgb_to_yuv()` in `still_input_conditioning.wgsl`
 
 ### 4.3 Luma Bandwidth Limitation
 
@@ -508,12 +510,12 @@ Mapping:
 
 | Formal stage | Current pipeline representation | Current WGSL location |
 | --- | --- | --- |
-| `InputDecode` | implicit working assumptions in `resolve_still_stages()` and `sample_working_signal()` | `sample_working_signal()` |
+| `InputDecode` | implicit working assumptions in `resolve_still_stages()` and the first-pass working-signal write | `still_input_conditioning.wgsl` |
 | `ToneShaping` | `SignalSettings.tone` + `effect.input_conditioning.xy` | `soft_highlight_knee()`, `apply_tone_shaping()` |
-| `RgbToLumaChroma` | fused working decomposition | `rgb_to_yuv()` inside `sample_working_signal()` |
+| `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain | `degrade_luma()` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
-| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning stage ahead of both luma and chroma sampling | `apply_input_conditioning()` |
+| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` and `apply_input_conditioning()` |
 | `NoiseAndDropouts` | noise-only subset of the stage via `SignalSettings.noise.*` | `sample_output_noise()` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `reconstruct_output()`, `yuv_to_rgb()` |
 
@@ -537,7 +539,7 @@ Documented here but not implemented yet:
 
 ## 7. Projection Rules Used By The Current Still Pipeline
 
-The current single-pass pipeline uses a narrow projection from formal `VhsModel` defaults into the compact `SignalSettings` preview layer.
+The current still pipeline uses a narrow projection from formal `VhsModel` defaults into the compact `SignalSettings` preview layer.
 
 These are engineering approximations, not physical constants:
 
@@ -584,7 +586,7 @@ Important runtime note:
 `StillImagePipeline::from_vhs_model()` uses the full projection above. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), and \(\epsilon_{YC}\) are held at zero unless a formal model is also present.
 
 Current calibration intent:
-the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the fused pass reads as technical analog degradation rather than glitch-oriented distortion art.
+the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.
 
 ### 7.1 Preview/manual guardrails
 
