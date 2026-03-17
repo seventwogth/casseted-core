@@ -6,6 +6,12 @@
 //! - `luma`: luma degradation
 //! - `chroma`: chroma degradation
 //! - `noise`: reconstruction / output noise injection
+//!
+//! Important scope note:
+//! these are preview-facing authoring controls, not the canonical formal model.
+//! The pipeline may softly normalize extreme manual values before they are packed
+//! into the still-pass uniform block so preview overrides stay closer to the
+//! intended analog-like visual regime.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignalSettings {

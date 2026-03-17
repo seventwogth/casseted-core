@@ -11,6 +11,7 @@ Current data flow:
 
 - CLI code reads a PNG into an `ImageFrame`
 - pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into the current still-preview controls
+- manual preview controls are softly normalized into effective preview ranges before stage resolution when they diverge from the model-projected path
 - `casseted-pipeline` resolves those controls into five logical implementation stages:
   `input conditioning / tone shaping`, `luma/chroma transform`, `luma degradation`,
   `chroma degradation`, and `reconstruction / output`

@@ -253,6 +253,13 @@ There are two intentional modes:
 - `StillImagePipeline::from_vhs_model()` keeps the current model-aligned subset active
 - `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection terms neutral
 
+Preview-specific guardrail rule:
+
+- manual preview controls are resolved through `effective_preview_signal()` before `resolve_still_stages()` packs uniforms
+- those guardrails only affect preview-facing `SignalSettings` terms
+- the formal `VhsModel` and its projection rules remain unchanged
+- if a model-projected pipeline later receives manual signal overrides, only the diverging preview terms are normalized
+
 Important constraint:
 this is a projection layer, not a graph engine and not a new runtime abstraction.
 
@@ -276,6 +283,14 @@ Secondary mappings that are still present but not the main focus of this phase:
 - `VhsTransportSettings.line_jitter_us` -> attenuated input-conditioning jitter proxy -> `effect.input_conditioning.z`
 - `VhsTransportSettings.vertical_wander_lines` -> still-frame vertical offset snapshot -> `effect.input_conditioning.w`
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction noise amplitudes -> `effect.reconstruction_output.xy`
+
+Current preview guardrails for manual / override-driven `SignalSettings`:
+
+- `tracking.line_jitter_px` uses a soft cap so strong values remain expressive but asymptotically stay below the current glitch-prone range
+- `chroma.offset_px` uses a signed soft cap and `chroma.bleed_px` gains a minimum blur floor tied to the effective offset
+- `noise.{luma_amount,chroma_amount}` use soft caps so noise does not jump ahead of tone and bandwidth loss
+- `tracking.vertical_offset_lines` also uses a signed soft cap so still-image transport wobble stays secondary
+- these rules are intentionally preview-only and do not redefine the formal model
 
 ## Current Visual Calibration Priorities
 
