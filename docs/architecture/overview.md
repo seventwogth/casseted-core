@@ -10,8 +10,9 @@ The current `casseted-core` workspace is intentionally split into four layers:
 Current still-image data flow:
 
 - CLI code reads a PNG into an `ImageFrame`
-- pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into the current still-preview controls
-- manual preview controls are softly normalized into effective preview ranges before stage resolution; on model-backed pipelines, untouched projected terms stay intact and only overridden preview terms are normalized
+- pipeline code either accepts manual `SignalSettings` or projects a formal `VhsModel` into a private `preview_base_signal`
+- model-backed preview edits now travel through explicit `SignalOverrides` instead of mutating the projected preview blob in place
+- manual preview controls are softly normalized into effective preview ranges before stage resolution; on model-backed pipelines, untouched projected terms stay intact and only explicit overrides are normalized
 - `casseted-pipeline` resolves those controls into five logical implementation stages:
   `input conditioning / tone shaping`, `luma/chroma transform`, `luma degradation`,
   `chroma degradation`, and `reconstruction / output`
@@ -41,6 +42,11 @@ What remains intentionally fused:
 - input interpretation, still-frame transport offsets, tone shaping, and `RGB -> YUV` fan-out share the first pass
 - refined noise contamination, restrained still-image dropout handling, and decode reconstruction remain together in the final pass
 - the final pass only reuses the conditioned scan-line phase as a procedural seed for noise/dropout placement; it does not resample luma/chroma through transport a second time
+
+Toolchain note:
+
+- the canonical workspace toolchain is now pinned to Rust `1.88.0` in `rust-toolchain.toml`
+- workspace verification commands are expected to run with `Cargo.lock` via `--locked`
 
 Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softening, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch expresses bandwidth loss as horizontal low-pass filtering plus coarse chroma reconstruction and restrained bleed, while the luma branch adds a thresholded asymmetric highlight smear so bright edges spread as part of signal loss instead of as post-process bloom. The final pass now keeps luma noise brightness-shaped and mildly line/band-correlated, while chroma contamination stays broader and softer than luma. Jitter, crosstalk, refined noise, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
 

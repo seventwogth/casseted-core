@@ -243,6 +243,10 @@ That preview layer is not a competing domain model. It is a narrow control surfa
 The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the limited multi-pass still implementation:
 
 - `StillImagePipeline::from_vhs_model()` creates the current still-preview configuration from a formal `VhsModel`
+- `StillImagePipeline::preview_base_signal()` exposes the projected preview/runtime subset without exposing it as a mutable second source of truth
+- `StillImagePipeline::preview_overrides()` exposes the explicit preview override layer
+- `StillImagePipeline::set_model()` reprojects the preview base when the formal model changes
+- `StillImagePipeline::set_preview_overrides()` and `clear_preview_overrides()` manage preview-only user intent explicitly
 - `project_vhs_model_to_preview_signal()` converts the formal model into compact preview controls
 - `resolve_still_stages()` groups those controls into the five implementation stages
 - `EffectUniforms` packs those stage controls into the shared WGSL uniform block used by the four still passes
@@ -261,7 +265,7 @@ Preview-specific guardrail rule:
 - manual preview controls are resolved through `effective_preview_signal()` before `resolve_still_stages()` packs uniforms
 - those guardrails only affect preview-facing `SignalSettings` terms
 - the formal `VhsModel` and its projection rules remain unchanged
-- if a model-projected pipeline later receives manual signal overrides, only the diverging preview terms are normalized, while untouched projected terms stay at the model-projected values
+- if a model-projected pipeline later receives manual signal overrides, only explicit override terms are normalized, while untouched projected terms stay at the model-projected values
 - coupled chroma override terms are still normalized together so offset-heavy overrides cannot collapse back into a digital color-split look
 
 Important constraint:
@@ -276,7 +280,7 @@ Current stage-aligned mapping:
   `VhsLumaSettings.preemphasis_db` -> restrained detail residual gain -> `effect.luma_degradation.y`
   existing tone + luma terms -> derived highlight-bleed threshold / amount -> `effect.luma_degradation.zw`
 - chroma degradation:
-  `VhsChromaSettings.delay_us` -> attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
+  `VhsChromaSettings.delay_us` -> signed attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
   `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma bandwidth-loss proxy -> `effect.chroma_degradation.y`
   `VhsChromaSettings.saturation_gain` -> `effect.chroma_degradation.z`
   `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
@@ -347,7 +351,7 @@ Still deferred:
 - temporal model
 - render-graph planning
 - video support
-- explicit API-level override tracking between public `model` and `signal` fields; direct caller mutation of `model` after construction still requires caller-managed reprojection if exact lockstep is needed
+- richer authoring workflows for override presets and inspection tooling; the current explicit override API is intentionally minimal and still-image-focused
 
 ## Consequence
 

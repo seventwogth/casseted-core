@@ -1,4 +1,4 @@
-use casseted_pipeline::{PipelineError, StillImagePipeline};
+use casseted_pipeline::{PipelineError, SignalOverrides, StillImagePipeline};
 use casseted_types::{FrameDescriptor, FrameSize, ImageDataError, ImageFrame, PixelFormat};
 use image::{ImageFormat, ImageReader, RgbaImage};
 use std::fmt;
@@ -102,6 +102,7 @@ fn run(args: Vec<String>) -> Result<(), CliError> {
     let cli = parse_args(args)?;
     let input = load_png(&cli.input)?;
     let pipeline = pipeline_from_args(&cli);
+    let preview_signal = pipeline.preview_signal();
     let output = pipeline.process_blocking(&input)?;
     let effective_signal = pipeline.effective_preview_signal();
 
@@ -119,22 +120,22 @@ fn run(args: Vec<String>) -> Result<(), CliError> {
             .join(" -> ")
     );
     let mut guardrail_changes = Vec::new();
-    if pipeline.signal.luma.blur_px != effective_signal.luma.blur_px {
+    if preview_signal.luma.blur_px != effective_signal.luma.blur_px {
         guardrail_changes.push("luma_blur");
     }
-    if pipeline.signal.chroma.offset_px != effective_signal.chroma.offset_px {
+    if preview_signal.chroma.offset_px != effective_signal.chroma.offset_px {
         guardrail_changes.push("chroma_offset");
     }
-    if pipeline.signal.chroma.bleed_px != effective_signal.chroma.bleed_px {
+    if preview_signal.chroma.bleed_px != effective_signal.chroma.bleed_px {
         guardrail_changes.push("chroma_bleed");
     }
-    if pipeline.signal.noise.luma_amount != effective_signal.noise.luma_amount {
+    if preview_signal.noise.luma_amount != effective_signal.noise.luma_amount {
         guardrail_changes.push("luma_noise");
     }
-    if pipeline.signal.noise.chroma_amount != effective_signal.noise.chroma_amount {
+    if preview_signal.noise.chroma_amount != effective_signal.noise.chroma_amount {
         guardrail_changes.push("chroma_noise");
     }
-    if pipeline.signal.tracking.line_jitter_px != effective_signal.tracking.line_jitter_px {
+    if preview_signal.tracking.line_jitter_px != effective_signal.tracking.line_jitter_px {
         guardrail_changes.push("line_jitter");
     }
     if !guardrail_changes.is_empty() {
@@ -226,24 +227,29 @@ fn parse_f32_flag(flag: &str, iter: &mut impl Iterator<Item = String>) -> Result
 
 fn pipeline_from_args(args: &CliArgs) -> StillImagePipeline {
     let mut pipeline = StillImagePipeline::default();
+    let mut overrides = SignalOverrides::default();
 
     if let Some(value) = args.luma_blur {
-        pipeline.signal.luma.blur_px = value;
+        overrides.luma.blur_px = Some(value);
     }
     if let Some(value) = args.chroma_offset {
-        pipeline.signal.chroma.offset_px = value;
+        overrides.chroma.offset_px = Some(value);
     }
     if let Some(value) = args.chroma_bleed {
-        pipeline.signal.chroma.bleed_px = value;
+        overrides.chroma.bleed_px = Some(value);
     }
     if let Some(value) = args.luma_noise {
-        pipeline.signal.noise.luma_amount = value;
+        overrides.noise.luma_amount = Some(value);
     }
     if let Some(value) = args.chroma_noise {
-        pipeline.signal.noise.chroma_amount = value;
+        overrides.noise.chroma_amount = Some(value);
     }
     if let Some(value) = args.line_jitter {
-        pipeline.signal.tracking.line_jitter_px = value;
+        overrides.tracking.line_jitter_px = Some(value);
+    }
+
+    if overrides != SignalOverrides::default() {
+        pipeline.set_preview_overrides(overrides);
     }
 
     pipeline

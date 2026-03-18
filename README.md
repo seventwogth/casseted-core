@@ -74,6 +74,25 @@ Agent stage log:
 - [`docs/agent-log/0003-highlight-bleed-and-dropout.md`](./docs/agent-log/0003-highlight-bleed-and-dropout.md)
 - [`docs/agent-log/0004-noise-path-refinement.md`](./docs/agent-log/0004-noise-path-refinement.md)
 - [`docs/agent-log/0005-signal-chain-stabilization-review.md`](./docs/agent-log/0005-signal-chain-stabilization-review.md)
+- [`docs/agent-log/0006-pipeline-state-integrity-and-toolchain-reproducibility.md`](./docs/agent-log/0006-pipeline-state-integrity-and-toolchain-reproducibility.md)
+
+## Build and setup
+
+Canonical workspace toolchain:
+
+- Rust `1.88.0`
+- `clippy` and `rustfmt` installed through `rust-toolchain.toml`
+- `Cargo.lock` committed and expected for workspace commands
+
+Recommended local verification:
+
+```bash
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+If you use `just`, the equivalent commands are available through `just check`, `just test`, `just clippy`, and `just ci`.
 
 ## CLI
 
@@ -96,6 +115,7 @@ Current notes:
 - input is read as PNG
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
+- the pipeline now keeps `preview_base + explicit preview_overrides` internally instead of exposing `model` and projected preview values as two freely mutable public sources of truth
 - the current limited multi-pass calibration emphasizes tone shoulder, luma softness, restrained highlight bleed, chroma bandwidth loss, brightness-shaped luma noise, softer chroma contamination, and mild dropout ahead of jitter-heavy distortion
 - aggressive manual overrides are softened into effective preview ranges before the WGSL passes run
 - when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
