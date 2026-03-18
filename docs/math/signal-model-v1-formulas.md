@@ -12,7 +12,10 @@ It is intentionally narrower than a full VHS deck model. The goal is to define t
 
 The current GPU implementation lives in:
 
-- `crates/casseted-pipeline/src/lib.rs`
+- `crates/casseted-pipeline/src/projection.rs`
+- `crates/casseted-pipeline/src/stages.rs`
+- `crates/casseted-pipeline/src/runtime.rs`
+- `crates/casseted-pipeline/src/state.rs`
 - `shaders/passes/still_input_conditioning.wgsl`
 - `shaders/passes/still_luma_degradation.wgsl`
 - `shaders/passes/still_chroma_degradation.wgsl`
@@ -134,7 +137,7 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.12]` |
 | `effect.luma_degradation.z` | derived highlight-bleed threshold, clamped to `[0.72, 0.96]` |
 | `effect.luma_degradation.w` | derived highlight-bleed amount, clamped to `[0, 0.16]` |
-| `effect.chroma_degradation.x` | current model projection is non-negative and intentionally attenuated relative to blur; manual preview values use a signed soft cap |
+| `effect.chroma_degradation.x` | current model projection preserves the sign of `VhsChromaSettings.delay_us` and remains intentionally attenuated relative to blur; manual preview values use a signed soft cap |
 | `effect.chroma_degradation.y` | resolved bandwidth-loss proxy `>= 0`; manual preview values are softly capped and also floored against the effective chroma offset |
 | `effect.chroma_degradation.z` | saturation gain `>= 0` |
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
@@ -569,7 +572,7 @@ Mapping:
 
 - formal source: `VhsTransportSettings.line_jitter_us`
 - formal source for \(\delta_V\): `VhsTransportSettings.vertical_wander_lines`
-- pipeline projection: `project_vhs_model_to_preview_signal()` converts \(\mu s \to\) reference pixels
+- pipeline projection: `project_vhs_model_to_preview_signal()` converts signed \(\mu s \to\) signed reference pixels
 - shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.frame.w`
 
 Calibration note:
@@ -874,7 +877,7 @@ where:
 - \(\tau_C\) and \(\tau_J\) are in microseconds
 - \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas projected into the preview amplitudes that the reconstruction shader reshapes into luma/chroma-specific contamination
 
-These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
+These projection rules currently live across `crates/casseted-pipeline/src/projection.rs` and `crates/casseted-pipeline/src/stages.rs`:
 
 - `project_vhs_model_to_preview_signal()`
 - `line_jitter_px_from_timebase()`
@@ -889,7 +892,7 @@ These projection rules currently live in `crates/casseted-pipeline/src/lib.rs`:
 - `detail_mix_from_preemphasis()`
 
 Important runtime note:
-`StillImagePipeline::from_vhs_model()` uses the full projection above. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), \(\epsilon_{YC}\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present.
+`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), \(\epsilon_{YC}\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs.
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.
@@ -898,7 +901,7 @@ the projection now overweights luma/chroma bandwidth loss relative to transport 
 
 The still pipeline applies an additional preview-only normalization layer to manual `SignalSettings` before stage resolution.
 
-This layer does not modify the formal `VhsModel`. It only converts raw manual preview inputs into effective applied values when a manual path or manual override path diverges from the model projection.
+This layer does not modify the formal `VhsModel`. It only converts raw manual preview inputs into effective applied values when a manual path or explicit preview override path diverges from the model projection.
 
 For a non-negative preview control \(x\), the current soft-cap function is:
 

@@ -1,4 +1,5 @@
-use super::{ResolvedStillStages, StillImagePipeline, effect_uniforms, resolve_still_stages};
+use super::{ChromaOverrides, LumaOverrides, SignalOverrides, StillImagePipeline, ToneOverrides};
+use crate::stages::{ResolvedStillStages, effect_uniforms, resolve_still_stages};
 use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_shaderlib::ShaderId;
 use casseted_signal::{SignalSettings, ToneSettings, TrackingSettings, VhsModel};
@@ -104,24 +105,41 @@ impl StageReferenceCase {
     fn perturb(self, pipeline: &mut StillImagePipeline) -> bool {
         match self {
             Self::InputConditioningTone => {
-                pipeline.signal.tone.highlight_soft_knee = 0.60;
-                pipeline.signal.tone.highlight_compression = 0.68;
+                pipeline.set_preview_overrides(SignalOverrides {
+                    tone: ToneOverrides {
+                        highlight_soft_knee: Some(0.60),
+                        highlight_compression: Some(0.68),
+                    },
+                    ..SignalOverrides::default()
+                });
                 true
             }
             Self::LumaChromaTransform => false,
             Self::LumaDegradation => {
-                pipeline.signal.luma.blur_px += 0.35;
+                pipeline.set_preview_overrides(SignalOverrides {
+                    luma: LumaOverrides {
+                        blur_px: Some(pipeline.preview_base_signal().luma.blur_px + 0.35),
+                    },
+                    ..SignalOverrides::default()
+                });
                 true
             }
             Self::ChromaDegradation => {
-                pipeline.signal.chroma.bleed_px += 0.40;
-                pipeline.signal.chroma.offset_px += 0.20;
+                pipeline.set_preview_overrides(SignalOverrides {
+                    chroma: ChromaOverrides {
+                        bleed_px: Some(pipeline.preview_base_signal().chroma.bleed_px + 0.40),
+                        offset_px: Some(pipeline.preview_base_signal().chroma.offset_px + 0.20),
+                        ..ChromaOverrides::default()
+                    },
+                    ..SignalOverrides::default()
+                });
                 true
             }
             Self::ReconstructionOutput => {
-                if let Some(model) = pipeline.model.as_mut() {
+                if let Some(mut model) = pipeline.model() {
                     model.noise.dropout_probability_per_line += 0.02;
                     model.noise.dropout_mean_span_us += 0.45;
+                    pipeline.set_model(model);
                 }
                 true
             }
@@ -552,8 +570,8 @@ fn stage_uniforms_match_reference_defaults() {
 
     for case in STAGE_REFERENCE_CASES {
         let pipeline = case.build_pipeline();
-        let stages = resolve_still_stages(&input, pipeline.signal, pipeline.model);
-        let _uniforms = effect_uniforms(&input, pipeline.signal, pipeline.model);
+        let stages = resolve_still_stages(&input, &pipeline);
+        let _uniforms = effect_uniforms(&input, &pipeline);
         case.assert_resolved_stage_defaults(&stages);
     }
 }

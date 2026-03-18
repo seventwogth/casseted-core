@@ -44,7 +44,13 @@ the formal transport stage still exists canonically in `casseted-signal`, but th
 The pipeline still owns a narrow projection bridge from the formal domain model into the current runtime:
 
 - `StillImagePipeline::from_vhs_model()`
+- `StillImagePipeline::preview_base_signal()`
+- `StillImagePipeline::preview_overrides()`
+- `StillImagePipeline::set_model()`
+- `StillImagePipeline::set_preview_overrides()`
+- `StillImagePipeline::clear_preview_overrides()`
 - `project_vhs_model_to_preview_signal()`
+- `preview_signal()`
 - `effective_preview_signal()`
 - `resolve_still_stages()`
 - `EffectUniforms`
@@ -52,7 +58,8 @@ The pipeline still owns a narrow projection bridge from the formal domain model 
 Stabilization note:
 
 - the shared frame block now carries the frame/procedural seed used by both input conditioning and reconstruction-side noise/dropout helpers, so `effect.reconstruction_output` stays focused on output-stage terms
-- model-backed preview overrides are merged per overridden term instead of re-normalizing untouched projected terms
+- `StillImagePipeline` now keeps `model`, projected `preview_base_signal`, and explicit `SignalOverrides` as separate internal responsibilities
+- model-backed preview overrides are merged per explicit override instead of inferring user intent from float equality or re-normalizing untouched projected terms
 
 That bridge remains intentionally narrow. It does not introduce:
 
@@ -60,6 +67,13 @@ That bridge remains intentionally narrow. It does not introduce:
 - a plugin system
 - a generalized planning runtime
 - pass scheduling outside the fixed still-image sequence
+
+Current internal code split inside `casseted-pipeline`:
+
+- `state.rs`: public pipeline API plus model/base/override state ownership
+- `projection.rs`: formal-model projection and preview guardrails
+- `stages.rs`: logical-stage resolution and uniform packing
+- `runtime.rs`: `wgpu` execution, bind groups, and readback
 
 ## Why this is the chosen decomposition
 
