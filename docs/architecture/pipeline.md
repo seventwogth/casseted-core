@@ -4,6 +4,7 @@ The current real still-image pipeline in `casseted-core` is intentionally small:
 
 - input: one `ImageFrame` in `RGBA8`
 - execution: four fullscreen `wgpu` render passes
+- compiled runtime: one reusable `StillPipelineRuntime` that can hold the prepared GPU objects for those four passes
 - shaders:
   `shaders/passes/still_input_conditioning.wgsl`,
   `shaders/passes/still_luma_degradation.wgsl`,
@@ -73,7 +74,48 @@ Current internal code split inside `casseted-pipeline`:
 - `state.rs`: public pipeline API plus model/base/override state ownership
 - `projection.rs`: formal-model projection and preview guardrails
 - `stages.rs`: logical-stage resolution and uniform packing
-- `runtime.rs`: `wgpu` execution, bind groups, and readback
+- `runtime.rs`: compiled runtime state, per-run GPU resource setup, `wgpu` execution, and readback
+
+## Runtime Boundary
+
+The still-image path now has an explicit boundary between description and execution:
+
+- `StillImagePipeline` describes what to do:
+  projected preview state, explicit overrides, effective preview signal, stage resolution inputs
+- `StillPipelineRuntime` describes what is already prepared for execution on one GPU context:
+  compiled render pipelines, bind-group layouts, sampler, and fixed pass wiring
+
+This boundary is intentionally narrow:
+
+- the formal model and preview/runtime settings stay outside the compiled runtime
+- the compiled runtime does not own signal settings or a second copy of the model
+- the compiled runtime is still specific to the current four-pass still-image chain and is not a generalized renderer framework
+
+## Reuse Scope
+
+`StillPipelineRuntime` currently reuses:
+
+- `wgpu::RenderPipeline` for `still_input_conditioning`
+- `wgpu::RenderPipeline` for `still_luma_degradation`
+- `wgpu::RenderPipeline` for `still_chroma_degradation`
+- `wgpu::RenderPipeline` for `still_reconstruction_output`
+- the shared linear sampler
+- the single-input and dual-input bind-group layouts
+
+Still allocated per run:
+
+- input texture upload
+- working, luma, chroma, and output textures
+- uniform buffer
+- bind groups for those per-run views/buffers
+- readback buffer
+
+This is the intended compromise for still-image v1:
+
+- enough reuse to remove the obvious execution-state churn
+- no texture pool manager yet
+- no batch subsystem yet
+- no render graph or generic pass scheduler
 
 ## Why this is the chosen decomposition
 
@@ -97,4 +139,4 @@ The following are still deferred:
 - head-switching artifacts
 - chroma phase error
 - video and temporal state
-- aggressive pipeline caching and resource reuse work
+- texture pooling and broader readback reuse

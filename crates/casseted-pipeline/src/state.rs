@@ -2,7 +2,7 @@ use crate::projection::{
     SignalOverrides, apply_preview_overrides, effective_preview_signal,
     project_vhs_model_to_preview_signal,
 };
-use crate::runtime::{PipelineError, process_with_gpu};
+use crate::runtime::{PipelineError, StillPipelineRuntime, process_with_gpu};
 use casseted_gpu::{GpuContext, GpuContextDescriptor};
 use casseted_shaderlib::ShaderId;
 use casseted_signal::{SignalSettings, VhsModel};
@@ -122,6 +122,14 @@ impl StillImagePipeline {
         input: &ImageFrame,
     ) -> Result<ImageFrame, PipelineError> {
         process_with_gpu(self, context, input)
+    }
+
+    pub fn process_with_runtime(
+        &self,
+        runtime: &StillPipelineRuntime<'_>,
+        input: &ImageFrame,
+    ) -> Result<ImageFrame, PipelineError> {
+        runtime.process(self, input)
     }
 }
 

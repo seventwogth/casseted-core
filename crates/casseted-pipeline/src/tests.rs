@@ -1,6 +1,7 @@
 use crate::stages::{effect_uniform_bytes, effect_uniforms, resolve_still_stages};
 use crate::{
-    ChromaOverrides, NoiseOverrides, SignalOverrides, StillImagePipeline, TrackingOverrides,
+    ChromaOverrides, NoiseOverrides, SignalOverrides, StillImagePipeline, StillPipelineRuntime,
+    TrackingOverrides,
 };
 use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_shaderlib::ShaderId;
@@ -247,4 +248,32 @@ fn still_image_pipeline_modifies_pixels_when_gpu_is_available() {
         .expect("pipeline should process the image");
 
     assert_images_not_identical(&input, &output);
+}
+
+#[test]
+fn compiled_runtime_can_be_reused_across_repeated_runs() {
+    let gpu = match pollster::block_on(GpuContext::request(&GpuContextDescriptor::default())) {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+
+    let runtime = StillPipelineRuntime::new(&gpu);
+    let input_a = gradient_rgba8_image(FrameSize::new(8, 8));
+    let input_b = gradient_rgba8_image(FrameSize::new(12, 10));
+    let pipeline = StillImagePipeline::default();
+
+    let output_a = pipeline
+        .process_with_runtime(&runtime, &input_a)
+        .expect("runtime should process the first image");
+    let output_b = pipeline
+        .process_with_runtime(&runtime, &input_b)
+        .expect("runtime should process the second image");
+    let legacy_output_a = pipeline
+        .process_with_gpu(&gpu, &input_a)
+        .expect("legacy gpu entry point should remain functional");
+
+    assert_images_not_identical(&input_a, &output_a);
+    assert_images_not_identical(&input_b, &output_b);
+    assert_eq!(output_a, legacy_output_a);
 }

@@ -22,6 +22,7 @@ Current still-image data flow:
   `still_luma_degradation`,
   `still_chroma_degradation`,
   `still_reconstruction_output`
+- a compact compiled runtime layer can now hold the reusable GPU execution objects for that fixed pass chain
 - three intermediate textures carry the working YUV signal, degraded luma, and degraded chroma between passes
 - the processed image is copied back to CPU memory as an `ImageFrame`
 - CLI code writes the result as PNG
@@ -30,6 +31,7 @@ The key point in the current phase is that the still-image path is now explicit 
 
 - the canonical signal model in `casseted-signal` still defines the eight formal v1 stages
 - the working GPU path groups them into five implementation stages and executes them as a compact four-pass runtime without a render graph
+- the compiled runtime layer owns reusable GPU execution state for that fixed pass chain, while `StillImagePipeline` remains only the high-level description of the still-image effect
 
 Why this degree of decomposition was chosen:
 
@@ -42,6 +44,21 @@ What remains intentionally fused:
 - input interpretation, still-frame transport offsets, tone shaping, and `RGB -> YUV` fan-out share the first pass
 - refined noise contamination, restrained still-image dropout handling, and decode reconstruction remain together in the final pass
 - the final pass only reuses the conditioned scan-line phase as a procedural seed for noise/dropout placement; it does not resample luma/chroma through transport a second time
+
+What is now intentionally reused across repeated runs:
+
+- `wgpu::RenderPipeline` objects for the four still passes
+- the single-texture and dual-texture bind-group layouts
+- the shared linear sampler
+- the fixed compiled pass wiring represented by `StillPipelineRuntime`
+
+What still remains per-run on purpose:
+
+- input, working, luma, chroma, and output textures
+- uniform and readback buffers
+- bind groups that reference per-run textures and buffers
+
+That split is deliberate for the current phase: it removes the obvious compile/setup churn without introducing a render graph, generic texture pool, or batch subsystem before the still-image path actually needs them.
 
 Toolchain note:
 

@@ -59,6 +59,7 @@ The current still-image path is deliberately compact:
 
 - five logical implementation stages
 - four WGSL render passes with three intermediate textures
+- one compact compiled runtime layer for reusing prepared GPU execution objects across repeated still-image runs
 - no render graph or plugin-style orchestration
 - restrained second-order artifacts integrated into the existing luma and reconstruction stages instead of separate effect passes
 
@@ -116,6 +117,7 @@ Current notes:
 - output is written as PNG
 - if no flags are provided, the built-in mild analog defaults are projected from `VhsModel::default()`
 - the pipeline now keeps `preview_base + explicit preview_overrides` internally instead of exposing `model` and projected preview values as two freely mutable public sources of truth
+- repeated still-image processing can now reuse a compiled `StillPipelineRuntime` instead of recreating render pipelines, bind-group layouts, and the sampler on every run
 - the current limited multi-pass calibration emphasizes tone shoulder, luma softness, restrained highlight bleed, chroma bandwidth loss, brightness-shaped luma noise, softer chroma contamination, and mild dropout ahead of jitter-heavy distortion
 - aggressive manual overrides are softened into effective preview ranges before the WGSL passes run
 - when that happens, the CLI prints a `preview-guardrails` line and reports the effective applied values
