@@ -6,7 +6,7 @@ The current repository is intentionally split into small crates with narrow resp
 - `casseted-signal` describes analog-style signal assumptions without binding them to GPU code.
 - `casseted-shaderlib` owns built-in WGSL sources.
 - `casseted-gpu` contains lightweight `wgpu` configuration helpers.
-- `casseted-pipeline` composes the pieces into a minimal executable plan.
+- `casseted-pipeline` composes the pieces into a minimal executable plan, with high-level still-image description kept separate from the compiled runtime layer.
 - `casseted-cli` offers a small manual entry point for development.
 - `casseted-testing` holds helpers that can be reused as the workspace grows.
 

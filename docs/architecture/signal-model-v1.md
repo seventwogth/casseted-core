@@ -250,6 +250,7 @@ The current still-image pipeline now has an explicit narrow projection from `Vhs
 - `project_vhs_model_to_preview_signal()` converts the formal model into compact preview controls
 - `resolve_still_stages()` groups those controls into the five implementation stages
 - `EffectUniforms` packs those stage controls into the shared WGSL uniform block used by the four still passes
+- `StillPipelineRuntime` compiles the fixed GPU execution objects for those passes without becoming a second source of truth for signal settings
 - the runtime writes three intermediate textures:
   working YUV,
   degraded luma,
@@ -270,6 +271,12 @@ Preview-specific guardrail rule:
 
 Important constraint:
 this is a projection layer, not a graph engine and not a new runtime abstraction.
+
+Important boundary clarification:
+
+- `VhsModel`, `SignalSettings`, preview overrides, and resolved stage terms still describe intent
+- `StillPipelineRuntime` only prepares the GPU form of the current still-image pass chain
+- reusing that runtime does not change the formal model, the projection rules, or the preview guardrails
 
 Current stage-aligned mapping:
 

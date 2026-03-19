@@ -9,7 +9,7 @@ pub use projection::{
     ChromaOverrides, LumaOverrides, NoiseOverrides, SignalOverrides, ToneOverrides,
     TrackingOverrides,
 };
-pub use runtime::PipelineError;
+pub use runtime::{PipelineError, StillPipelineRuntime};
 pub use state::StillImagePipeline;
 
 #[cfg(test)]
