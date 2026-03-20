@@ -44,7 +44,7 @@ The current implementation keeps those stages in a compact four-pass runtime and
 | `still_input_conditioning` | input conditioning / tone shaping + luma/chroma transform | `resolve_input_conditioning_stage()`, `conditioned_sample_uv()`, `apply_tone_shaping()`, `rgb_to_yuv()` | one working-signal pass |
 | `still_luma_degradation` | luma degradation | `resolve_luma_degradation_stage()`, `degrade_luma()`, `highlight_bleed()` | one luma branch pass |
 | `still_chroma_degradation` | chroma degradation | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | one chroma branch pass |
-| `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `sample_output_noise()`, `apply_dropout()`, `reconstruct_output()` | one final output pass |
+| `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | one final output pass |
 
 ### Current Visual Regression Fixtures
 
@@ -146,7 +146,7 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.chroma_degradation.y` | resolved bandwidth-loss proxy `>= 0`; manual preview values are softly capped and also floored against the effective chroma offset |
 | `effect.chroma_degradation.z` | saturation gain `>= 0` |
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
-| `effect.reconstruction_output.xy` | noise amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges |
+| `effect.reconstruction_output.xy` | reconstruction-contamination amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges before the final pass reshapes them into brightness-dependent luma contamination and softer chroma contamination |
 | `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
 | `effect.frame.w` | shared frame / procedural seed from `FrameDescriptor.frame_index` |
 | `effect.reconstruction_aux.x` | model-driven dropout line probability clamped to `[0, 0.08]`; manual preview path keeps it at `0` |
@@ -639,15 +639,23 @@ Pipeline / shader mapping:
 ### 4.5 Reconstruction To Output RGB
 
 Purpose:
-recombine degraded luma and chroma into a display RGB image after the current still-image dropout approximation, then inject the refined noise subset near output reconstruction.
+recombine degraded luma and chroma into a display RGB image through one explicit still-image final-stage sequence:
+
+1. condition the branch outputs with the restrained dropout approximation
+2. apply reconstruction/output contamination in `Y/C` space
+3. apply the residual Y/C leakage term and decode to RGB
 
 Mathematical meaning:
-take the dropout-conditioned signal from section `5.3`, add a small Y/C leakage term to luma, apply the luma/chroma-specific contamination terms from section `5.2`, then invert the working matrix.
+take the dropout-conditioned signal from section `5.3`, apply the luma/chroma-specific contamination terms from section `5.2`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix.
 
 Current approximation:
 
 \[
-Y_R = \operatorname{clamp}\left(Y_L^\star + \epsilon_{YC}(0.10U_D^\star - 0.05V_D^\star) + n_Y^\star, 0, 1\right)
+g_{YC} = 1 - 0.15\gamma_D
+\]
+
+\[
+Y_R = \operatorname{clamp}\left(Y_L^\star + g_{YC}\epsilon_{YC}(0.10U_D^\star - 0.05V_D^\star) + n_Y^\star, 0, 1\right)
 \]
 
 \[
@@ -663,19 +671,19 @@ B_{\text{out}} &= Y_R + 2.03211U_R
 \]
 
 Visual effect:
-coherent recombination with mild color leakage and contamination that reads more like analog signal dirt than like a uniform grain overlay.
+coherent recombination with mild color leakage and contamination that reads more like analog signal dirt than like a uniform grain overlay, while stronger dropout concealment does not immediately reintroduce full leakage strength.
 
 Signal motivation:
 medium. Reconstruction is required, but the exact consumer-decoder behavior is simplified.
 
 Engineering approximation:
-the still pass reconstructs directly to clamped RGB in the final fragment stage after evaluating the dropout-conditioned contamination terms.
+the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper.
 
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::DecodeOutput`
 - uniform mapping: `effect.reconstruction_output`
-- shader implementation: `sample_output_noise()`, `reconstruct_output()`, `yuv_to_rgb()`
+- shader implementation: `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()`
 
 ## 5. Secondary Integrated Terms
 
@@ -716,9 +724,9 @@ the current still-image path keeps transport instability intentionally subordina
 Boundary note:
 the reconstruction pass reuses the same conditioned line phase only to derive procedural noise/dropout coordinates. It does not resample the already degraded luma/chroma textures through transport a second time.
 
-### 5.2 Signal-Shaped Noise Contamination
+### 5.2 Signal-Shaped Reconstruction Contamination
 
-The shader still uses deterministic hash noise, but it no longer treats luma and chroma as the same pixelwise additive overlay.
+The shader still uses deterministic hash noise, but the final stage now treats the result as an explicit reconstruction/output contamination step in `Y/C` space instead of as an anonymous additive overlay.
 
 Define a centered hash term
 
@@ -902,9 +910,13 @@ Y_L^\star(x, y) =
 \]
 
 \[
+\kappa_C = 0.35(1 - 0.25\gamma_D)
+\]
+
+\[
 C_D^\star(x, y) =
 (1 - 0.85\gamma_D)C_D(x, y)
-+ 0.85\gamma_D \cdot 0.35C_C(x, y)
++ 0.85\gamma_D \cdot \kappa_C C_C(x, y)
 \]
 
 Visual effect:
@@ -914,14 +926,14 @@ Signal motivation:
 medium to high. Real dropout handling is often temporal or decoder-specific; this still-image subset instead focuses on plausible local signal loss without introducing frame history.
 
 Engineering approximation:
-the shader uses deterministic line hashes and neighboring-line concealment in the final pass. The same pass lightly attenuates the general output-noise terms inside active dropout regions so the concealment approximation does not read like a uniform noisy overlay. This is intentionally a still-image v1 approximation, not a temporal dropout compensator.
+the shader uses deterministic line hashes and neighboring-line concealment in the final pass. Stronger dropout concealment now also reduces the amount of chroma that neighboring lines are allowed to reintroduce, and the same pass lightly attenuates its general reconstruction-contamination terms inside active dropout regions so the concealment approximation does not read like a uniform noisy overlay. This is intentionally a still-image v1 approximation, not a temporal dropout compensator.
 
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::NoiseAndDropouts`
 - formal source: `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}`
 - shader uniforms: `effect.reconstruction_aux.xy`
-- shader implementation: `line_dropout_mask()`, `apply_dropout()`
+- shader implementation: `line_dropout_mask()`, `apply_dropout_approximation()`
 
 ## 6. Mapping To Code
 

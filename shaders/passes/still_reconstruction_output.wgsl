@@ -16,7 +16,17 @@ struct ProceduralSeed {
     noise_coord: vec2<f32>,
 };
 
-struct OutputNoise {
+struct ReconstructionSignal {
+    luma: f32,
+    chroma: vec2<f32>,
+};
+
+struct DropoutApproximation {
+    signal: ReconstructionSignal,
+    dropout_mix: f32,
+};
+
+struct ReconstructionContamination {
     luma: f32,
     chroma: vec2<f32>,
 };
@@ -66,6 +76,13 @@ fn sample_chroma(uv: vec2<f32>) -> vec2<f32> {
     return textureSample(chroma_texture, signal_sampler, clamped).xy;
 }
 
+fn sample_reconstruction_signal(uv: vec2<f32>) -> ReconstructionSignal {
+    var signal: ReconstructionSignal;
+    signal.luma = sample_luma(uv);
+    signal.chroma = sample_chroma(uv);
+    return signal;
+}
+
 fn frame_inv_size() -> vec2<f32> {
     return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
 }
@@ -92,18 +109,17 @@ fn procedural_seed_from_conditioned_phase(uv: vec2<f32>) -> ProceduralSeed {
     return seed;
 }
 
-fn sample_output_noise(
+fn sample_reconstruction_contamination(
     noise_coord: vec2<f32>,
-    luma_signal: f32,
-    chroma_signal: vec2<f32>,
+    signal: ReconstructionSignal,
     dropout_mix: f32,
-) -> OutputNoise {
+) -> ReconstructionContamination {
     let frame_index = effect.frame.w;
-    let clamped_luma = clamp(luma_signal, 0.0, 1.0);
+    let clamped_luma = clamp(signal.luma, 0.0, 1.0);
 
-    var noise: OutputNoise;
-    noise.luma = 0.0;
-    noise.chroma = vec2<f32>(0.0, 0.0);
+    var contamination: ReconstructionContamination;
+    contamination.luma = 0.0;
+    contamination.chroma = vec2<f32>(0.0, 0.0);
 
     if (effect.reconstruction_output.x > 1e-5) {
         let luma_visibility = 0.35 + 0.65 * pow(1.0 - clamped_luma, 0.7);
@@ -115,7 +131,7 @@ fn sample_output_noise(
         );
         let luma_line = centered_hash(vec2<f32>(noise_coord.y + 29.0, frame_index + 13.0));
         let luma_dropout_scale = mix(1.0, 0.72, dropout_mix);
-        noise.luma = (luma_fine * 0.45 + luma_band * 0.35 + luma_line * 0.20)
+        contamination.luma = (luma_fine * 0.45 + luma_band * 0.35 + luma_line * 0.20)
             * effect.reconstruction_output.x
             * luma_visibility
             * luma_dropout_scale;
@@ -148,12 +164,12 @@ fn sample_output_noise(
             floor(noise_coord.x * 0.14) + noise_coord.y * 0.12 + 149.0,
             frame_index + 37.0,
         ));
-        let chroma_phase = vec2<f32>(-chroma_signal.y, chroma_signal.x)
+        let chroma_phase = vec2<f32>(-signal.chroma.y, signal.chroma.x)
             * (phase_like * effect.reconstruction_output.y * 0.45 * chroma_dropout_scale);
-        noise.chroma = chroma_additive + chroma_phase;
+        contamination.chroma = chroma_additive + chroma_phase;
     }
 
-    return noise;
+    return contamination;
 }
 
 fn line_dropout_mask(noise_coord: vec2<f32>) -> f32 {
@@ -189,60 +205,79 @@ fn line_dropout_mask(noise_coord: vec2<f32>) -> f32 {
     return segment * breakup;
 }
 
-fn apply_dropout(
+fn apply_dropout_approximation(
     uv: vec2<f32>,
     noise_coord: vec2<f32>,
-    luma_signal: f32,
-    chroma_signal: vec2<f32>,
-) -> vec4<f32> {
+    base_signal: ReconstructionSignal,
+) -> DropoutApproximation {
+    var dropout: DropoutApproximation;
+    dropout.signal = base_signal;
+    dropout.dropout_mix = 0.0;
+
     let mask = line_dropout_mask(noise_coord);
     if (mask <= 1e-4) {
-        return vec4<f32>(luma_signal, chroma_signal, 0.0);
+        return dropout;
     }
 
     let inv_size = frame_inv_size();
     let conceal_up_uv = uv - vec2<f32>(0.0, inv_size.y);
     let conceal_down_uv = uv + vec2<f32>(0.0, inv_size.y);
-    let concealed_luma = sample_luma(conceal_up_uv) * 0.55 + sample_luma(conceal_down_uv) * 0.45;
-    let concealed_chroma =
-        sample_chroma(conceal_up_uv) * 0.55 + sample_chroma(conceal_down_uv) * 0.45;
+    let concealed_up = sample_reconstruction_signal(conceal_up_uv);
+    let concealed_down = sample_reconstruction_signal(conceal_down_uv);
+    var concealed_signal: ReconstructionSignal;
+    concealed_signal.luma = concealed_up.luma * 0.55 + concealed_down.luma * 0.45;
+    concealed_signal.chroma = concealed_up.chroma * 0.55 + concealed_down.chroma * 0.45;
     let line_strength = mix(
         0.35,
         0.72,
         hash12(vec2<f32>(noise_coord.y + 73.0, effect.frame.w + 11.0)),
     );
-    let dropout_mix = mask * line_strength;
+    dropout.dropout_mix = mask * line_strength;
     let dropout_luma_noise =
         (hash12(noise_coord + vec2<f32>(effect.frame.w, 29.0)) - 0.5)
-            * dropout_mix
+            * dropout.dropout_mix
             * 0.08;
-    let dropout_luma = clamp(
-        mix(luma_signal, concealed_luma, dropout_mix) + dropout_mix * 0.05 + dropout_luma_noise,
+    dropout.signal.luma = clamp(
+        mix(base_signal.luma, concealed_signal.luma, dropout.dropout_mix)
+            + dropout.dropout_mix * 0.05
+            + dropout_luma_noise,
         0.0,
         1.0,
     );
-    let dropout_chroma = mix(chroma_signal, concealed_chroma * 0.35, dropout_mix * 0.85);
-    return vec4<f32>(dropout_luma, dropout_chroma, dropout_mix);
+    let concealed_chroma_support = 0.35 * mix(1.0, 0.75, dropout.dropout_mix);
+    dropout.signal.chroma = mix(
+        base_signal.chroma,
+        concealed_signal.chroma * concealed_chroma_support,
+        dropout.dropout_mix * 0.85,
+    );
+    return dropout;
 }
 
-fn reconstruct_output(
-    luma_signal: f32,
-    chroma_signal: vec2<f32>,
-    noise: OutputNoise,
+fn y_c_leakage_luma(chroma_signal: vec2<f32>, dropout_mix: f32) -> f32 {
+    let dropout_scale = mix(1.0, 0.85, dropout_mix);
+    return dot(chroma_signal, vec2<f32>(0.10, -0.05))
+        * effect.reconstruction_output.z
+        * dropout_scale;
+}
+
+fn compose_display_yuv(
+    reconstructed_signal: ReconstructionSignal,
+    contamination: ReconstructionContamination,
+    dropout_mix: f32,
 ) -> vec3<f32> {
     let reconstructed_y = clamp(
-        luma_signal
-            + dot(chroma_signal, vec2<f32>(0.10, -0.05)) * effect.reconstruction_output.z
-            + noise.luma,
+        reconstructed_signal.luma
+            + y_c_leakage_luma(reconstructed_signal.chroma, dropout_mix)
+            + contamination.luma,
         0.0,
         1.0,
     );
-    let reconstructed_chroma = chroma_signal + noise.chroma;
-    return clamp(
-        yuv_to_rgb(vec3<f32>(reconstructed_y, reconstructed_chroma.x, reconstructed_chroma.y)),
-        vec3<f32>(0.0),
-        vec3<f32>(1.0),
-    );
+    let reconstructed_chroma = reconstructed_signal.chroma + contamination.chroma;
+    return vec3<f32>(reconstructed_y, reconstructed_chroma.x, reconstructed_chroma.y);
+}
+
+fn decode_output_rgb(display_yuv: vec3<f32>) -> vec3<f32> {
+    return clamp(yuv_to_rgb(display_yuv), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @vertex
@@ -267,18 +302,18 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
 @fragment
 fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
     let seed = procedural_seed_from_conditioned_phase(in.uv);
-    let dropped_signal = apply_dropout(
+    let base_signal = sample_reconstruction_signal(in.uv);
+    let dropout = apply_dropout_approximation(
         in.uv,
         seed.noise_coord,
-        sample_luma(in.uv),
-        sample_chroma(in.uv),
+        base_signal,
     );
-    let noise = sample_output_noise(
+    let contamination = sample_reconstruction_contamination(
         seed.noise_coord,
-        dropped_signal.x,
-        dropped_signal.yz,
-        dropped_signal.w,
+        dropout.signal,
+        dropout.dropout_mix,
     );
-    let rgb = reconstruct_output(dropped_signal.x, dropped_signal.yz, noise);
+    let display_yuv = compose_display_yuv(dropout.signal, contamination, dropout.dropout_mix);
+    let rgb = decode_output_rgb(display_yuv);
     return vec4<f32>(rgb, 1.0);
 }

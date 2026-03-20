@@ -89,13 +89,13 @@ Those stages now execute through a limited four-pass runtime:
 | Input conditioning pass | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, plus the currently spatial subset of `TransportInstability` | `still_input_conditioning.wgsl` |
 | Luma pass | luma degradation | `LumaRecordPath` | `still_luma_degradation.wgsl` |
 | Chroma pass | chroma degradation | `ChromaRecordPath` | `still_chroma_degradation.wgsl` |
-| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (brightness-shaped luma contamination, softer chroma contamination, and the restrained still-dropout subset) and `DecodeOutput` | `still_reconstruction_output.wgsl` |
+| Reconstruction pass | reconstruction / output | `NoiseAndDropouts` (dropout-conditioned reconstruction signal plus brightness-shaped luma contamination and softer chroma contamination) and `DecodeOutput` (residual Y/C leakage plus `YUV -> RGB` decode) | `still_reconstruction_output.wgsl` |
 
 Why this grouping is used now:
 
 - it creates one explicit working-signal fan-out point after tone shaping
 - it gives luma and chroma separate physical branches without introducing a render graph
-- it keeps signal-shaped noise and decode fused so the orchestration stays compact for still-image work
+- it keeps dropout-conditioned reconstruction, signal-shaped contamination, and decode fused so the orchestration stays compact for still-image work
 
 ## Visual Regression Mapping
 
@@ -107,7 +107,7 @@ The current visual regression foundation keeps one committed source image plus o
 | Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the working-signal fan-out path | `rgb_to_yuv()` in `still_input_conditioning.wgsl` | `luma-chroma-transform.png` |
 | Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()`, `highlight_bleed()` | `luma-degradation.png` |
 | Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | `chroma-degradation.png` |
-| Reconstruction / output | `4.5` plus notes in `5.2` and `5.3` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `sample_output_noise()`, `apply_dropout()`, `reconstruct_output()` | `reconstruction-output.png` |
+| Reconstruction / output | `4.5` plus notes in `5.2` and `5.3` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | `reconstruction-output.png` |
 
 Current fixture policy:
 
@@ -171,7 +171,7 @@ Purpose:
 remove the "pure digital filter" feel by injecting stochastic corruption.
 
 Current v1 shape:
-brightness-shaped luma contamination, softer lower-bandwidth chroma contamination, and a restrained line-oriented dropout approximation driven by the formal dropout parameters and resolved through adjacent-line concealment instead of temporal logic.
+restrained line-oriented dropout conditioning of the branch-resolved reconstruction signal, plus brightness-shaped luma contamination and softer lower-bandwidth chroma contamination.
 
 ### 8. DecodeOutput
 
@@ -179,7 +179,7 @@ Purpose:
 reconstruct a display-space RGB image from the degraded working signal.
 
 Current v1 shape:
-`YUV -> RGB` reconstruction with a small Y/C leakage term.
+`YUV -> RGB` reconstruction from the dropout-conditioned, contamination-augmented signal with a small Y/C leakage term that also backs off slightly inside stronger dropout concealment.
 
 ## Domain Ownership
 
@@ -297,6 +297,8 @@ Current stage-aligned mapping:
 
 The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell integration / width, and restrained contamination from one bandwidth-loss proxy instead of expanding the public preview API.
 
+The final pass now treats its compact contract the same way: `effect.reconstruction_output.xy` resolve to contamination amplitudes, `effect.reconstruction_output.z` resolves to residual Y/C leakage, and `effect.reconstruction_aux.xy` resolve to the restrained dropout subset. The pass boundary stays the same, but the internal sequence is now explicit instead of reading like one catch-all helper.
+
 Secondary mappings that are still present but not the main focus of this phase:
 
 - `VhsTransportSettings.line_jitter_us` -> attenuated input-conditioning jitter proxy -> `effect.input_conditioning.z`
@@ -347,7 +349,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma two-scale low-pass/detail attenuation biased toward microcontrast loss, with restrained bright-edge lag and highlight bleed embedded in the same branch
 - chroma delay plus low-pass/cell-integrated reconstruction/contamination degradation biased toward bandwidth loss over misregistration
-- reconstruction back to RGB with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage
+- reconstruction back to RGB from a dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage that now backs off slightly inside active dropout concealment
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for noise/dropout placement; it does not reapply transport resampling to luma/chroma textures
 
