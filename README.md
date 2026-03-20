@@ -150,4 +150,3 @@ Current testing is intentionally lightweight:
 - stage regression coverage for resolved defaults, bounded perturbations, and reference PNG comparisons when a GPU adapter is available
 - shared helpers in [`docs/testing.md`](./docs/testing.md)
 
-seventwogth - 2026
