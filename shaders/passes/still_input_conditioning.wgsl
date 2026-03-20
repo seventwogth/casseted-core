@@ -31,7 +31,10 @@ fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
 }
 
 fn frame_inv_size() -> vec2<f32> {
-    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+    return vec2<f32>(
+        1.0 / max(effect.frame.x, 1.0),
+        1.0 / max(effect.frame.y, 1.0),
+    );
 }
 
 fn soft_highlight_knee(value: f32, knee: f32, compression: f32) -> f32 {

@@ -31,7 +31,7 @@ The implemented still-image subset is:
 2. `RGB -> YUV` decomposition
 3. luma low-pass/detail attenuation plus restrained highlight bleed
 4. chroma horizontal delay + band-limited, cell-integrated chroma reconstruction + optional vertical line blend
-5. `YUV -> RGB` reconstruction with a small Y/C leakage term, brightness-shaped luma contamination, softer chroma contamination, and restrained still-image dropout handling
+5. `YUV -> RGB` reconstruction with a restrained lower-band head-switching approximation, a small Y/C leakage term, brightness-shaped luma contamination, softer chroma contamination, and restrained still-image dropout handling
 
 The current implementation keeps those stages in a compact four-pass runtime and names them explicitly in code through:
 
@@ -46,7 +46,7 @@ The current implementation keeps those stages in a compact four-pass runtime and
 | `still_input_conditioning` | input conditioning / tone shaping + luma/chroma transform | `resolve_input_conditioning_stage()`, `conditioned_sample_uv()`, `apply_tone_shaping()`, `rgb_to_yuv()` | one working-signal pass |
 | `still_luma_degradation` | luma degradation | `resolve_luma_degradation_stage()`, `degrade_luma()`, `highlight_bleed()` | one luma branch pass |
 | `still_chroma_degradation` | chroma degradation | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | one chroma branch pass |
-| `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | one final output pass |
+| `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `apply_head_switching_approximation()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | one final output pass |
 
 ### Current Visual Regression Fixtures
 
@@ -58,7 +58,7 @@ Committed fixtures now live in `assets/reference-images/still-pipeline-v1/`.
 | Luma/chroma transform | `luma-chroma-transform.png` | `4.2` | none beyond the shared frame block; this is the neutral transform fixture for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
 | Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363`; the shader derives low/mid/fine-band luma attenuation from that compact state |
 | Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
-| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2`, `5.3` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
+| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2`, `5.3`, `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `b_S = 0`, `r_S = 0`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
 
 Current committed output tolerance for those PNG comparisons:
 
@@ -105,11 +105,15 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | \(\beta_V\) | vertical chroma blend | `VhsDecodeSettings.chroma_vertical_blend` |
 | \(\epsilon_{YC}\) | residual Y/C leakage | `VhsDecodeSettings.luma_chroma_crosstalk` |
 | \(\tau_J\) | formal line-jitter amplitude | `VhsTransportSettings.line_jitter_us` |
+| \(b_H\) | formal head-switching band height in lines | `VhsTransportSettings.head_switching_band_lines` |
+| \(\tau_H\) | formal head-switching offset in microseconds | `VhsTransportSettings.head_switching_offset_us` |
 | \(\delta_V\) | still-frame vertical offset snapshot | `SignalSettings.tracking.vertical_offset_lines` |
 | \(a_Y\) | luma noise amplitude | `SignalSettings.noise.luma_amount` |
 | \(a_C\) | chroma noise amplitude | `SignalSettings.noise.chroma_amount` |
 | \(\sigma_\phi\) | chroma phase-noise scale in radians | `VhsNoiseSettings.chroma_phase_noise_deg` |
 | \(p_J\) | line-jitter amplitude in reference pixels | `SignalSettings.tracking.line_jitter_px` |
+| \(b_S\) | resolved head-switching band height in lines | `clamp(b_H, 0, 20)` |
+| \(r_S\) | resolved head-switching horizontal offset in pixels | `clamp(13.5 * tau_H * s_ref, -32 * s_ref, 32 * s_ref)` |
 | \(q_D\) | dropout probability per line | `VhsNoiseSettings.dropout_probability_per_line` |
 | \(\tau_D\) | mean dropout span in microseconds | `VhsNoiseSettings.dropout_mean_span_us` |
 
@@ -153,14 +157,16 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
 | `effect.reconstruction_output.xy` | reconstruction-contamination amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges before the final pass reshapes them into brightness-dependent luma contamination and softer chroma contamination |
 | `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
+| `effect.frame.z` | model-only head-switching band height in lines; manual preview path keeps it at `0` |
 | `effect.frame.w` | shared frame / procedural seed from `FrameDescriptor.frame_index` |
 | `effect.reconstruction_aux.x` | model-driven dropout line probability clamped to `[0, 0.08]`; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.y` | model-driven dropout span proxy in pixels clamped to `[0, 48 * s_ref]`; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.z` | deterministic chroma phase bias in radians; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.w` | non-negative chroma phase-noise scale in radians; manual preview path keeps it at `0` |
+| `effect.reconstruction_output.w` | bounded head-switching horizontal offset proxy in pixels; manual preview path keeps it at `0` |
 
 Current packing note:
-the compact uniform block now uses `effect.frame = (W, H, 1 / W, f)`. The shaders derive `1 / H` from `H` so the frame index stays in the shared frame block instead of leaking into an output-stage-specific slot.
+the compact uniform block now uses `effect.frame = (W, H, b_S, f)`. The shaders derive inverse frame size from `W` and `H`, which frees one shared lane for the model-only head-switching band while keeping the frame index in the shared frame block.
 
 ## 3. Input And Working Representation
 
@@ -674,7 +680,7 @@ recombine degraded luma and chroma into a display RGB image through one explicit
 3. apply the residual Y/C leakage term and decode to RGB
 
 Mathematical meaning:
-take the dropout-conditioned signal from section `5.3`, apply the luma/chroma-specific contamination terms from section `5.2`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix. The deterministic chroma phase bias from section `4.4` is already baked into the incoming chroma signal; this final stage only adds the stochastic local perturbation term \(\Delta C_\phi\).
+take the head-switching-conditioned signal from section `5.2`, condition it further through the restrained dropout approximation from section `5.4`, apply the luma/chroma-specific contamination terms from section `5.3`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix. The deterministic chroma phase bias from section `4.4` is already baked into the incoming chroma signal; this final stage only adds the stochastic local perturbation term \(\Delta C_\phi\).
 
 Current approximation:
 
@@ -705,13 +711,13 @@ Signal motivation:
 medium. Reconstruction is required, but the exact consumer-decoder behavior is simplified.
 
 Engineering approximation:
-the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper. The chroma phase term used here is still a restrained low-band UV-domain perturbation of the current chroma vector, not a full analog carrier/decode phase simulation.
+the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `head-switching-conditioned reconstruction signal -> dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper. The chroma phase term used here is still a restrained low-band UV-domain perturbation of the current chroma vector, not a full analog carrier/decode phase simulation, and the head-switching term stays a lower-band still-image seam/disturbance approximation rather than a full field-timing model.
 
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::DecodeOutput`
 - uniform mapping: `effect.reconstruction_output` plus the chroma-phase-noise auxiliary in `effect.reconstruction_aux.w`
-- shader implementation: `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()`
+- shader implementation: `apply_head_switching_approximation()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()`
 
 ## 5. Secondary Integrated Terms
 
@@ -752,7 +758,110 @@ the current still-image path keeps transport instability intentionally subordina
 Boundary note:
 the reconstruction pass reuses the same conditioned line phase only to derive procedural noise/dropout coordinates. It does not resample the already degraded luma/chroma textures through transport a second time.
 
-### 5.2 Signal-Shaped Reconstruction Contamination
+### 5.2 Head-Switching Approximation
+
+Purpose:
+activate the formal `head_switching_*` subset as a restrained lower-frame transport-side imperfection without introducing field timing, sequence state, or a decorative glitch bar.
+
+Mathematical meaning:
+derive one bottom-band support mask from the formal band height, use the formal offset as a bounded horizontal displacement inside that band, and reduce chroma support there more than luma support so the result reads like a switching-adjacent seam rather than like random dropout.
+
+Resolved control terms:
+
+\[
+b_S = \operatorname{clamp}(b_H, 0, 20)
+\]
+
+\[
+r_S = \operatorname{clamp}(13.5\tau_H s_{\text{ref}}, -32s_{\text{ref}}, 32s_{\text{ref}})
+\]
+
+If either \(b_S \le \varepsilon\) or \(|r_S| \le \varepsilon\), the current still-image path leaves this subset inactive.
+
+Otherwise define the top of the switching band:
+
+\[
+y_S = \max(0, H - b_S)
+\]
+
+For line \(\ell \ge y_S\), derive a restrained band/seam support:
+
+\[
+p_S(\ell) = \operatorname{clamp}\left(\frac{\ell - y_S + 0.5}{\max(b_S, 1)}, 0, 1\right)
+\]
+
+\[
+\lambda_S(\ell) = \operatorname{mix}(0.82, 1.0, \operatorname{hash}(\ell + 173,\; f + 19))
+\]
+
+\[
+m_B(\ell) = p_S(\ell)^2 \lambda_S(\ell)
+\]
+
+\[
+m_E(\ell) = \left(1 - \operatorname{smoothstep}(0, 1.5, \ell - y_S)\right)\lambda_S(\ell)
+\]
+
+Then sample one horizontally shifted signal inside the same line:
+
+\[
+(Y_H^\rightarrow, C_H^\rightarrow)(x, y) = (Y_H, C_H)(x + r_S, y)
+\]
+
+and blend it back only partially:
+
+\[
+g_Y^S = 0.18m_B + 0.22m_E
+\qquad
+g_C^S = 0.28m_B + 0.18m_E
+\]
+
+\[
+\eta_S(x, \ell) = 0.025m_E(\ell)\left(
+\operatorname{hash}(\lfloor 0.25x \rfloor + 191,\; \ell + f + 13) - 0.5
+\right)
+\]
+
+\[
+\kappa_S = 1 - 0.28m_B - 0.12m_E
+\]
+
+\[
+Y_H^\star = \operatorname{clamp}\left(
+(1 - g_Y^S)Y_H + g_Y^S Y_H^\rightarrow + \eta_S,
+0,
+1
+\right)
+\]
+
+\[
+C_H^\star = (1 - g_C^S)C_H + g_C^S \kappa_S C_H^\rightarrow
+\]
+
+The implementation uses:
+
+\[
+\gamma_S = \max(g_Y^S, g_C^S)
+\]
+
+as a compact disturbance-strength proxy for later contamination/leakage backoff.
+
+Visual effect:
+a mild lower-frame transport seam with bounded horizontal instability and slightly weaker chroma support, not a full-width tear or broken-file bar.
+
+Signal motivation:
+medium. Head switching is transport-side and line-structured, but the current milestone still targets only plausible still-frame playback artifacts.
+
+Engineering approximation:
+the runtime does not simulate field timing, head drum geometry, or decoder relock. It uses the formal band height only to localize a lower switching band and uses the formal offset only as a bounded horizontal disturbance inside that band.
+
+Pipeline / shader mapping:
+
+- formal source: `VhsTransportSettings.{head_switching_band_lines,head_switching_offset_us}`
+- shader uniforms: `effect.frame.z`, `effect.reconstruction_output.w`
+- shader implementation: `apply_head_switching_approximation()`
+
+### 5.3 Signal-Shaped Reconstruction Contamination
 
 The shader still uses deterministic hash noise, but the final stage now treats the result as an explicit reconstruction/output contamination step in `Y/C` space instead of as an anonymous additive overlay.
 
@@ -777,6 +886,12 @@ s(\operatorname{fract}(\kappa x))
 \right)
 \]
 
+Let the final pass reuse the stronger of dropout and head-switching support as one restrained disturbance-backoff term:
+
+\[
+\gamma_T = \max(\gamma_D, \gamma_S)
+\]
+
 Brightness-shaped luma contamination:
 
 \[
@@ -784,7 +899,7 @@ m_Y = 0.35 + 0.65(1 - Y_L^\star)^{0.7}
 \]
 
 \[
-g_Y = \operatorname{mix}(1.0, 0.72, \gamma_D)
+g_Y = \operatorname{mix}(1.0, 0.72, \gamma_T)
 \]
 
 \[
@@ -803,7 +918,7 @@ m_C = 0.55 + 0.25(1 - Y_L^\star)^{0.5}
 \]
 
 \[
-g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_D)
+g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_T)
 \]
 
 \[
@@ -841,7 +956,7 @@ Mapping:
 Calibration note:
 the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, keeps chroma contamination broader and softer than luma contamination, and applies phase noise as a separate low-band chroma-vector perturbation rather than as a spatial RGB split. All of those terms are attenuated inside dropout masks so localized signal loss remains readable.
 
-### 5.3 Dropout Approximation
+### 5.4 Dropout Approximation
 
 Purpose:
 introduce restrained local signal loss so the still output stops feeling perfectly intact, without turning into tearing, broken-file corruption, or temporal glitch logic.
@@ -983,6 +1098,8 @@ Pipeline / shader mapping:
 | \(\phi_E\) | `VhsChromaSettings.phase_error_deg` | resolved as a model-only auxiliary, packed into `effect.reconstruction_aux.z`, and consumed by the chroma stage |
 | \(\beta_V\) | `VhsDecodeSettings.chroma_vertical_blend` | projected directly into the uniform block |
 | \(\epsilon_{YC}\) | `VhsDecodeSettings.luma_chroma_crosstalk` | projected directly into the uniform block |
+| \(b_H\) | `VhsTransportSettings.head_switching_band_lines` | resolved as a model-only auxiliary, packed into `effect.frame.z`, and consumed by the final reconstruction/output stage |
+| \(\tau_H\) | `VhsTransportSettings.head_switching_offset_us` | resolved to a bounded pixel-space offset in `effect.reconstruction_output.w` and consumed by the final reconstruction/output stage |
 | \(\sigma_\phi\) | `VhsNoiseSettings.chroma_phase_noise_deg` | resolved as a model-only auxiliary, packed into `effect.reconstruction_aux.w`, and consumed by the reconstruction contamination step |
 | \(q_D\) | `VhsNoiseSettings.dropout_probability_per_line` | projected directly into the reconstruction auxiliary uniform block |
 | \(\tau_D\) | `VhsNoiseSettings.dropout_mean_span_us` | projected to a pixel-space span in the reconstruction auxiliary uniform block |
@@ -996,7 +1113,7 @@ Pipeline / shader mapping:
 | `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` bandwidth-loss proxy + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend + deterministic chroma phase bias packed in `effect.reconstruction_aux.z` | `degrade_chroma()` |
-| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` |
+| `TransportInstability` | `SignalSettings.tracking.*` plus model-only head-switching auxiliaries; the global still-frame transport subset remains in the input-conditioning pass, while the lower switching band is applied later as a restrained reconstruction-side approximation | `conditioned_sample_uv()`, `apply_head_switching_approximation()` |
 | `NoiseAndDropouts` | brightness-shaped luma contamination, softer band-correlated chroma contamination from `SignalSettings.noise.*`, stochastic low-band chroma phase noise packed in `effect.reconstruction_aux.w`, and model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
 
@@ -1017,7 +1134,7 @@ Partially active / approximated:
 - fixed `sRGB` + BT.601-like + progressive input assumptions at the stage level, without field-driven `VhsInputSettings` switching yet
 - `VhsLumaSettings.{bandwidth_mhz,preemphasis_db}` through the compact luma bandwidth/detail approximation
 - `VhsChromaSettings.{delay_us,bandwidth_khz,phase_error_deg}` through the compact chroma offset/bandwidth-loss approximation plus a direct chroma-vector phase rotation at the chroma/reconstruction boundary
-- `VhsTransportSettings.{line_jitter_us,vertical_wander_lines}` through the still-frame spatial transport subset
+- `VhsTransportSettings.{line_jitter_us,vertical_wander_lines,head_switching_band_lines,head_switching_offset_us}` through the still-frame spatial transport subset, with `head_switching_*` implemented as a restrained lower-band reconstruction-side approximation
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma,chroma_phase_noise_deg}` through brightness-shaped luma contamination, softer additive chroma contamination, and restrained low-band chroma phase perturbation
 - `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` through restrained local still-image dropout concealment
 - derived highlight bleed from the current tone + luma state
@@ -1026,7 +1143,6 @@ Partially active / approximated:
 Documented here but not implemented yet:
 
 - `VhsInputSettings.{matrix,transfer,temporal_sampling}` as runtime selectors
-- head-switching region behavior from `VhsTransportSettings.head_switching_*`
 - explicit output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
 
@@ -1053,6 +1169,12 @@ p_J = 13.5 \cdot \tau_J \cdot 0.22
 \]
 
 \[
+b_S = \operatorname{clamp}(b_H, 0, 20)
+\qquad
+r_S = \operatorname{clamp}(13.5 \cdot \tau_H \cdot s_{\text{ref}}, -32s_{\text{ref}}, 32s_{\text{ref}})
+\]
+
+\[
 a_Y = \min(1,\; \sigma_Y)
 \qquad
 a_C = \min(1,\; 0.35 \cdot \sigma_C)
@@ -1074,7 +1196,7 @@ where:
 
 - \(b_Y\) is in MHz
 - \(b_C\) is in kHz
-- \(\tau_C\) and \(\tau_J\) are in microseconds
+- \(\tau_C\), \(\tau_J\), and \(\tau_H\) are in microseconds
 - \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas projected into the preview amplitudes that the reconstruction shader reshapes into luma/chroma-specific contamination
 - \(\phi_{\mathrm{deg}}\) is `VhsChromaSettings.phase_error_deg`
 - \(\sigma_{\phi,\mathrm{deg}}\) is `VhsNoiseSettings.chroma_phase_noise_deg`
@@ -1093,10 +1215,12 @@ These projection rules currently live across `crates/casseted-pipeline/src/proje
 - `highlight_bleed_amount()`
 - `dropout_line_probability()`
 - `dropout_span_px_from_time()`
+- `head_switching_band_lines()`
+- `head_switching_offset_px_from_time()`
 - `detail_mix_from_preemphasis()`
 
 Important runtime note:
-`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\phi_E\), \(\beta_V\), \(\epsilon_{YC}\), \(\sigma_\phi\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs. In other words, the chroma phase terms are active in the model-backed still runtime subset, but they intentionally bypass the preview control surface and resolve only during stage packing.
+`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\phi_E\), \(\beta_V\), \(\epsilon_{YC}\), \(b_S\), \(r_S\), \(\sigma_\phi\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs. In other words, the chroma phase and head-switching terms are active in the model-backed still runtime subset, but they intentionally bypass the preview control surface and resolve only during stage packing.
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.

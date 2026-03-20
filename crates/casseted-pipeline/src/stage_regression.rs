@@ -54,7 +54,7 @@ impl StageReferenceCase {
             Self::LumaChromaTransform => "4.2",
             Self::LumaDegradation => "4.3",
             Self::ChromaDegradation => "4.4",
-            Self::ReconstructionOutput => "4.5 / 5.2 / 5.3",
+            Self::ReconstructionOutput => "4.5 / 5.2 / 5.3 / 5.4",
         }
     }
 
@@ -258,6 +258,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.chroma_phase_noise_rad",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_band_lines,
+                    0.0,
+                    "reconstruction_output.head_switching_band_lines",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_offset_px,
+                    0.0,
+                    "reconstruction_output.head_switching_offset_px",
+                );
             }
             Self::LumaChromaTransform => {
                 assert_approx_eq(
@@ -340,6 +350,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.chroma_phase_noise_rad",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_band_lines,
+                    0.0,
+                    "reconstruction_output.head_switching_band_lines",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_offset_px,
+                    0.0,
+                    "reconstruction_output.head_switching_offset_px",
+                );
             }
             Self::LumaDegradation => {
                 assert_approx_eq(
@@ -392,6 +412,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.chroma_phase_noise_rad",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_band_lines,
+                    0.0,
+                    "reconstruction_output.head_switching_band_lines",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_offset_px,
+                    0.0,
+                    "reconstruction_output.head_switching_offset_px",
+                );
             }
             Self::ChromaDegradation => {
                 assert_approx_eq(
@@ -439,6 +469,16 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.chroma_phase_noise_rad",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_band_lines,
+                    0.0,
+                    "reconstruction_output.head_switching_band_lines",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_offset_px,
+                    0.0,
+                    "reconstruction_output.head_switching_offset_px",
+                );
             }
             Self::ReconstructionOutput => {
                 assert_approx_eq(
@@ -475,6 +515,16 @@ impl StageReferenceCase {
                     stages.reconstruction_output.chroma_phase_noise_rad,
                     0.0,
                     "reconstruction_output.chroma_phase_noise_rad",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_band_lines,
+                    0.0,
+                    "reconstruction_output.head_switching_band_lines",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.head_switching_offset_px,
+                    0.0,
+                    "reconstruction_output.head_switching_offset_px",
                 );
             }
         }

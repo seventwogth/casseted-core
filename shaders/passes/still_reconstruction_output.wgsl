@@ -26,6 +26,11 @@ struct DropoutApproximation {
     dropout_mix: f32,
 };
 
+struct HeadSwitchingApproximation {
+    signal: ReconstructionSignal,
+    switching_mix: f32,
+};
+
 struct ReconstructionContamination {
     luma: f32,
     chroma: vec2<f32>,
@@ -97,7 +102,10 @@ fn sample_reconstruction_signal(uv: vec2<f32>) -> ReconstructionSignal {
 }
 
 fn frame_inv_size() -> vec2<f32> {
-    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+    return vec2<f32>(
+        1.0 / max(effect.frame.x, 1.0),
+        1.0 / max(effect.frame.y, 1.0),
+    );
 }
 
 // The final pass does not resample the signal through transport again.
@@ -122,14 +130,73 @@ fn procedural_seed_from_conditioned_phase(uv: vec2<f32>) -> ProceduralSeed {
     return seed;
 }
 
+fn apply_head_switching_approximation(
+    uv: vec2<f32>,
+    noise_coord: vec2<f32>,
+    base_signal: ReconstructionSignal,
+) -> HeadSwitchingApproximation {
+    var switching: HeadSwitchingApproximation;
+    switching.signal = base_signal;
+    switching.switching_mix = 0.0;
+
+    let band_lines = effect.frame.z;
+    let offset_px = effect.reconstruction_output.w;
+    if (band_lines <= 1e-5 || abs(offset_px) <= 1e-5) {
+        return switching;
+    }
+
+    let band_top = max(0.0, effect.frame.y - band_lines);
+    let line_in_band = noise_coord.y - band_top;
+    if (line_in_band < 0.0) {
+        return switching;
+    }
+
+    let band_progress =
+        clamp((line_in_band + 0.5) / max(band_lines, 1.0), 0.0, 1.0);
+    let line_breakup = mix(
+        0.82,
+        1.0,
+        hash12(vec2<f32>(noise_coord.y + 173.0, effect.frame.w + 19.0)),
+    );
+    let band_mix = band_progress * band_progress * line_breakup;
+    let seam_mix =
+        (1.0 - smoothstep(0.0, 1.5, line_in_band)) * line_breakup;
+    let inv_size = frame_inv_size();
+    let shifted_signal = sample_reconstruction_signal(
+        uv + vec2<f32>(offset_px * inv_size.x, 0.0),
+    );
+    let luma_shift_mix = band_mix * 0.18 + seam_mix * 0.22;
+    let chroma_shift_mix = band_mix * 0.28 + seam_mix * 0.18;
+    let seam_luma_noise = centered_hash(
+        vec2<f32>(
+            floor(noise_coord.x * 0.25) + 191.0,
+            noise_coord.y + effect.frame.w + 13.0,
+        ),
+    ) * seam_mix * 0.025;
+    let chroma_support = 1.0 - band_mix * 0.28 - seam_mix * 0.12;
+
+    switching.switching_mix = max(luma_shift_mix, chroma_shift_mix);
+    switching.signal.luma = clamp(
+        mix(base_signal.luma, shifted_signal.luma, luma_shift_mix) + seam_luma_noise,
+        0.0,
+        1.0,
+    );
+    switching.signal.chroma = mix(
+        base_signal.chroma,
+        shifted_signal.chroma * chroma_support,
+        chroma_shift_mix,
+    );
+    return switching;
+}
+
 fn sample_reconstruction_contamination(
     noise_coord: vec2<f32>,
     signal: ReconstructionSignal,
-    dropout_mix: f32,
+    disturbance_mix: f32,
 ) -> ReconstructionContamination {
     let frame_index = effect.frame.w;
     let clamped_luma = clamp(signal.luma, 0.0, 1.0);
-    let chroma_dropout_scale = mix(1.0, 0.45, dropout_mix);
+    let chroma_disturbance_scale = mix(1.0, 0.45, disturbance_mix);
 
     var contamination: ReconstructionContamination;
     contamination.luma = 0.0;
@@ -144,11 +211,11 @@ fn sample_reconstruction_contamination(
             vec2<f32>(11.0, 0.31),
         );
         let luma_line = centered_hash(vec2<f32>(noise_coord.y + 29.0, frame_index + 13.0));
-        let luma_dropout_scale = mix(1.0, 0.72, dropout_mix);
+        let luma_disturbance_scale = mix(1.0, 0.72, disturbance_mix);
         contamination.luma = (luma_fine * 0.45 + luma_band * 0.35 + luma_line * 0.20)
             * effect.reconstruction_output.x
             * luma_visibility
-            * luma_dropout_scale;
+            * luma_disturbance_scale;
     }
 
     if (effect.reconstruction_output.y > 1e-5) {
@@ -172,7 +239,7 @@ fn sample_reconstruction_contamination(
             chroma_band_v * 0.72 + chroma_line_v * 0.28,
         ) * effect.reconstruction_output.y
             * chroma_visibility
-            * chroma_dropout_scale;
+            * chroma_disturbance_scale;
         contamination.chroma = chroma_additive;
     }
 
@@ -188,7 +255,7 @@ fn sample_reconstruction_contamination(
             centered_hash(vec2<f32>(noise_coord.y * 0.35 + 157.0, frame_index + 43.0));
         let phase_perturbation = (phase_band * 0.74 + phase_line * 0.26)
             * effect.reconstruction_aux.w
-            * chroma_dropout_scale;
+            * chroma_disturbance_scale;
         let rotated_chroma = rotate_chroma(signal.chroma, phase_perturbation);
         contamination.chroma = contamination.chroma + (rotated_chroma - signal.chroma);
     }
@@ -278,10 +345,10 @@ fn apply_dropout_approximation(
 }
 
 fn y_c_leakage_luma(chroma_signal: vec2<f32>, dropout_mix: f32) -> f32 {
-    let dropout_scale = mix(1.0, 0.85, dropout_mix);
+    let disturbance_scale = mix(1.0, 0.85, dropout_mix);
     return dot(chroma_signal, vec2<f32>(0.10, -0.05))
         * effect.reconstruction_output.z
-        * dropout_scale;
+        * disturbance_scale;
 }
 
 fn compose_display_yuv(
@@ -327,17 +394,23 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOutput {
 fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
     let seed = procedural_seed_from_conditioned_phase(in.uv);
     let base_signal = sample_reconstruction_signal(in.uv);
-    let dropout = apply_dropout_approximation(
+    let head_switching = apply_head_switching_approximation(
         in.uv,
         seed.noise_coord,
         base_signal,
     );
+    let dropout = apply_dropout_approximation(
+        in.uv,
+        seed.noise_coord,
+        head_switching.signal,
+    );
+    let disturbance_mix = max(dropout.dropout_mix, head_switching.switching_mix);
     let contamination = sample_reconstruction_contamination(
         seed.noise_coord,
         dropout.signal,
-        dropout.dropout_mix,
+        disturbance_mix,
     );
-    let display_yuv = compose_display_yuv(dropout.signal, contamination, dropout.dropout_mix);
+    let display_yuv = compose_display_yuv(dropout.signal, contamination, disturbance_mix);
     let rgb = decode_output_rgb(display_yuv);
     return vec4<f32>(rgb, 1.0);
 }
