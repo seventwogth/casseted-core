@@ -34,8 +34,8 @@ Those five stages are now executed as a limited four-pass runtime.
 | --- | --- | --- | --- |
 | `still_input_conditioning` | working YUV texture | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, and the current still-frame spatial subset of `TransportInstability` |
 | `still_luma_degradation` | degraded luma texture | luma degradation via two-scale low-pass/detail attenuation with restrained bright-edge lag and highlight bleed | `LumaRecordPath` |
-| `still_chroma_degradation` | degraded chroma texture | chroma degradation via low-pass, coarse chroma reconstruction, restrained smear, and optional vertical line blend | `ChromaRecordPath` |
-| `still_reconstruction_output` | final `RGBA8` output | reconstruction / output with dropout-conditioned `Y/C` reconstruction, brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout concealment | `NoiseAndDropouts` (refined contamination + still-image dropout subset) and `DecodeOutput` |
+| `still_chroma_degradation` | degraded chroma texture | chroma degradation via low-pass, coarse chroma reconstruction, restrained smear, optional vertical line blend, and restrained chroma-phase bias | `ChromaRecordPath` |
+| `still_reconstruction_output` | final `RGBA8` output | reconstruction / output with dropout-conditioned `Y/C` reconstruction, brightness-shaped luma contamination, softer chroma contamination, restrained chroma phase noise, and restrained line-segment dropout concealment | `NoiseAndDropouts` (refined contamination + still-image dropout subset) and `DecodeOutput` |
 
 Important detail:
 the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it remains fused into the first pass instead of becoming a standalone transport pass.
@@ -59,6 +59,7 @@ The pipeline still owns a narrow projection bridge from the formal domain model 
 Stabilization note:
 
 - the shared frame block now carries the frame/procedural seed used by both input conditioning and reconstruction-side noise/dropout helpers, so `effect.reconstruction_output` stays focused on final-stage contamination/leakage terms
+- the shared auxiliary block now also carries the model-only chroma-phase terms, so those formal fields can stay off the preview surface without widening the uniform layout
 - `StillImagePipeline` now keeps `model`, projected `preview_base_signal`, and explicit `SignalOverrides` as separate internal responsibilities
 - model-backed preview overrides are merged per explicit override instead of inferring user intent from float equality or re-normalizing untouched projected terms
 
@@ -137,6 +138,5 @@ The following are still deferred:
 - render-graph planning
 - dedicated dropout-only masking passes
 - head-switching artifacts
-- chroma phase error
 - video and temporal state
 - texture pooling and broader readback reuse

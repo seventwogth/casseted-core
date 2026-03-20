@@ -101,12 +101,14 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | \(\tau_C\) | chroma delay relative to luma | `VhsChromaSettings.delay_us` |
 | \(b_C\) | chroma bandwidth proxy | `VhsChromaSettings.bandwidth_khz` |
 | \(g_C\) | chroma saturation gain | `VhsChromaSettings.saturation_gain` |
+| \(\phi_E\) | deterministic chroma phase bias in radians | `VhsChromaSettings.phase_error_deg` |
 | \(\beta_V\) | vertical chroma blend | `VhsDecodeSettings.chroma_vertical_blend` |
 | \(\epsilon_{YC}\) | residual Y/C leakage | `VhsDecodeSettings.luma_chroma_crosstalk` |
 | \(\tau_J\) | formal line-jitter amplitude | `VhsTransportSettings.line_jitter_us` |
 | \(\delta_V\) | still-frame vertical offset snapshot | `SignalSettings.tracking.vertical_offset_lines` |
 | \(a_Y\) | luma noise amplitude | `SignalSettings.noise.luma_amount` |
 | \(a_C\) | chroma noise amplitude | `SignalSettings.noise.chroma_amount` |
+| \(\sigma_\phi\) | chroma phase-noise scale in radians | `VhsNoiseSettings.chroma_phase_noise_deg` |
 | \(p_J\) | line-jitter amplitude in reference pixels | `SignalSettings.tracking.line_jitter_px` |
 | \(q_D\) | dropout probability per line | `VhsNoiseSettings.dropout_probability_per_line` |
 | \(\tau_D\) | mean dropout span in microseconds | `VhsNoiseSettings.dropout_mean_span_us` |
@@ -131,6 +133,7 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | \(\gamma_Y\) | local luma-edge guard used to keep chroma subordinate | `clamp(2.8 * max(abs(Y_0 - Y_-), abs(Y_0 - Y_+)), 0, 1)` |
 | \(\beta_N\) | derived chroma vertical-neighbor weight | `0.18 + 0.06 * eta_C` |
 | \(s_D\) | resolved dropout mean span in pixels | `min(48 * s_ref, 13.5 * tau_D * s_ref)` |
+| \(\delta_\phi\) | local chroma phase-noise angle | low-band noise in `sample_reconstruction_contamination()` scaled by `effect.reconstruction_aux.w` |
 
 ### Current range rules used by stage verification
 
@@ -153,6 +156,8 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.frame.w` | shared frame / procedural seed from `FrameDescriptor.frame_index` |
 | `effect.reconstruction_aux.x` | model-driven dropout line probability clamped to `[0, 0.08]`; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.y` | model-driven dropout span proxy in pixels clamped to `[0, 48 * s_ref]`; manual preview path keeps it at `0` |
+| `effect.reconstruction_aux.z` | deterministic chroma phase bias in radians; manual preview path keeps it at `0` |
+| `effect.reconstruction_aux.w` | non-negative chroma phase-noise scale in radians; manual preview path keeps it at `0` |
 
 Current packing note:
 the compact uniform block now uses `effect.frame = (W, H, 1 / W, f)`. The shaders derive `1 / H` from `H` so the frame index stays in the shared frame block instead of leaking into an output-stage-specific slot.
@@ -614,16 +619,31 @@ C_V(x, y) = \beta_N C_S(x, y - 1)
 + \beta_N C_S(x, y + 1)
 \]
 
+Deterministic chroma phase bias:
+
+\[
+R(\phi) =
+\begin{bmatrix}
+\cos\phi & -\sin\phi \\
+\sin\phi & \cos\phi
+\end{bmatrix}
+\]
+
+\[
+C_\phi(x, y) = R(\phi_E)\left[(1 - \beta_V)C_S(x, y) + \beta_V C_V(x, y)\right]
+\]
+
 Final chroma approximation:
 
 \[
-C_D(x, y) = g_C \left[(1 - \beta_V)C_S(x, y) + \beta_V C_V(x, y)\right]
+C_D(x, y) = g_C C_\phi(x, y)
 \]
 
 where:
 
 - \(g_C = \texttt{SignalSettings.chroma.saturation}\)
 - \(\beta_V = \texttt{VhsDecodeSettings.chroma\_vertical\_blend}\)
+- \(\phi_E = \operatorname{radians}(\texttt{VhsChromaSettings.phase\_error\_deg})\)
 
 Visual effect:
 color bleeding, softened color edges, more convincing horizontal chroma resolution loss, and only mild luma/chroma misregistration.
@@ -632,13 +652,13 @@ Signal motivation:
 high for lower chroma bandwidth and registration error.
 
 Engineering approximation:
-current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> cell integration -> coarse B-spline-like reconstruction -> restrained trailing contamination` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching, and it now suppresses part of the trailing contamination on strong luma edges so the chroma branch stays visually subordinate to the refined luma branch.
+current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> cell integration -> coarse B-spline-like reconstruction -> restrained trailing contamination -> vertical blend -> direct chroma-vector phase rotation` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching, and it now suppresses part of the trailing contamination on strong luma edges so the chroma branch stays visually subordinate to the refined luma branch.
 
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::ChromaRecordPath`
 - pipeline projection: `project_vhs_model_to_preview_signal()` and `chroma_bleed_from_bandwidth()`
-- uniform mapping: `effect.chroma_degradation`
+- uniform mapping: `effect.chroma_degradation` plus the chroma-phase auxiliary in `effect.reconstruction_aux.z`
 - shader implementation: `degrade_chroma()`
 
 ### 4.5 Reconstruction To Output RGB
@@ -664,7 +684,7 @@ Y_R = \operatorname{clamp}\left(Y_L^\star + g_{YC}\epsilon_{YC}(0.10U_D^\star - 
 \]
 
 \[
-(U_R, V_R) = (U_D^\star, V_D^\star) + \Delta C_A + \Delta C_\perp
+(U_R, V_R) = (U_D^\star, V_D^\star) + \Delta C_A + \Delta C_\phi
 \]
 
 \[
@@ -687,7 +707,7 @@ the still pass still reconstructs directly to clamped RGB in one final fragment 
 Pipeline / shader mapping:
 
 - formal stage: `VhsSignalStage::DecodeOutput`
-- uniform mapping: `effect.reconstruction_output`
+- uniform mapping: `effect.reconstruction_output` plus the chroma-phase-noise auxiliary in `effect.reconstruction_aux.w`
 - shader implementation: `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()`
 
 ## 5. Secondary Integrated Terms
@@ -792,7 +812,7 @@ g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_D)
 \]
 
 \[
-\eta_\perp = \xi(\lfloor 0.14x \rfloor + 0.12y + 149,\; f + 37)
+\nu_\phi = 0.74b(x, y; 0.05, 89, 0.17) + 0.26\xi(0.35y + 157,\; f + 43)
 \]
 
 \[
@@ -800,19 +820,23 @@ g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_D)
 \]
 
 \[
-\Delta C_\perp = 0.45a_C g_C^D \eta_\perp (-V_D^\star, U_D^\star)
+\delta_\phi = \sigma_\phi g_C^D \nu_\phi
 \]
 
-Here \(\Delta C_A\) is the broader additive chroma contamination term, while \(\Delta C_\perp\) is a small phase-like perturbation aligned to the current chroma vector instead of to RGB space.
+\[
+\Delta C_\phi = R(\delta_\phi)C_D^\star - C_D^\star
+\]
+
+Here \(\Delta C_A\) is the broader additive chroma contamination term from `chroma_sigma`, while \(\Delta C_\phi\) is the separate phase-noise perturbation driven by `chroma_phase_noise_deg` and aligned to the current chroma vector instead of to RGB space.
 
 Mapping:
 
-- formal source: `VhsNoiseSettings.luma_sigma`, `VhsNoiseSettings.chroma_sigma`
+- formal source: `VhsNoiseSettings.luma_sigma`, `VhsNoiseSettings.chroma_sigma`, `VhsNoiseSettings.chroma_phase_noise_deg`
 - pipeline projection: `project_vhs_model_to_preview_signal()`
-- shader uniforms: `effect.reconstruction_output.x`, `effect.reconstruction_output.y`
+- shader uniforms: `effect.reconstruction_output.x`, `effect.reconstruction_output.y`, `effect.reconstruction_aux.w`
 
 Calibration note:
-the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, keeps chroma contamination broader and softer than luma contamination, and attenuates both inside dropout masks so localized signal loss remains readable.
+the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, keeps chroma contamination broader and softer than luma contamination, and applies phase noise as a separate low-band chroma-vector perturbation rather than as a spatial RGB split. All of those terms are attenuated inside dropout masks so localized signal loss remains readable.
 
 ### 5.3 Dropout Approximation
 
@@ -953,8 +977,10 @@ Pipeline / shader mapping:
 | \(\tau_C\) | `VhsChromaSettings.delay_us` | projected to `SignalSettings.chroma.offset_px` |
 | \(b_C\) | `VhsChromaSettings.bandwidth_khz` | projected to `SignalSettings.chroma.bleed_px` |
 | \(g_C\) | `VhsChromaSettings.saturation_gain` | `SignalSettings.chroma.saturation` |
+| \(\phi_E\) | `VhsChromaSettings.phase_error_deg` | projected directly into the reconstruction auxiliary uniform block |
 | \(\beta_V\) | `VhsDecodeSettings.chroma_vertical_blend` | projected directly into the uniform block |
 | \(\epsilon_{YC}\) | `VhsDecodeSettings.luma_chroma_crosstalk` | projected directly into the uniform block |
+| \(\sigma_\phi\) | `VhsNoiseSettings.chroma_phase_noise_deg` | projected directly into the reconstruction auxiliary uniform block |
 | \(q_D\) | `VhsNoiseSettings.dropout_probability_per_line` | projected directly into the reconstruction auxiliary uniform block |
 | \(\tau_D\) | `VhsNoiseSettings.dropout_mean_span_us` | projected to a pixel-space span in the reconstruction auxiliary uniform block |
 
@@ -966,9 +992,9 @@ Pipeline / shader mapping:
 | `ToneShaping` | `SignalSettings.tone` + `effect.input_conditioning.xy` | `soft_highlight_knee()`, `apply_tone_shaping()` |
 | `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` bandwidth-loss proxy + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
-| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
+| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend + direct chroma phase bias | `degrade_chroma()` |
 | `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` |
-| `NoiseAndDropouts` | brightness-shaped luma contamination and softer band-correlated chroma contamination from `SignalSettings.noise.*`, plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
+| `NoiseAndDropouts` | brightness-shaped luma contamination, softer band-correlated chroma contamination from `SignalSettings.noise.*`, model-driven chroma phase noise, and model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
@@ -987,24 +1013,22 @@ Partially active / approximated:
 
 - fixed `sRGB` + BT.601-like + progressive input assumptions at the stage level, without field-driven `VhsInputSettings` switching yet
 - `VhsLumaSettings.{bandwidth_mhz,preemphasis_db}` through the compact luma bandwidth/detail approximation
-- `VhsChromaSettings.{delay_us,bandwidth_khz}` through the compact chroma offset/bandwidth-loss approximation
+- `VhsChromaSettings.{delay_us,bandwidth_khz,phase_error_deg}` through the compact chroma offset/bandwidth-loss approximation plus a direct chroma-vector phase rotation at the chroma/reconstruction boundary
 - `VhsTransportSettings.{line_jitter_us,vertical_wander_lines}` through the still-frame spatial transport subset
-- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` through brightness-shaped luma contamination and softer chroma contamination
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma,chroma_phase_noise_deg}` through brightness-shaped luma contamination, softer additive chroma contamination, and restrained low-band chroma phase perturbation
 - `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` through restrained local still-image dropout concealment
 - derived highlight bleed from the current tone + luma state
 
 Documented here but not implemented yet:
 
 - `VhsInputSettings.{matrix,transfer,temporal_sampling}` as runtime selectors
-- chroma phase error from `VhsChromaSettings.phase_error_deg`
-- chroma phase noise from `VhsNoiseSettings.chroma_phase_noise_deg`
 - head-switching region behavior from `VhsTransportSettings.head_switching_*`
 - explicit output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
 
 ## 7. Projection Rules Used By The Current Still Pipeline
 
-The current still pipeline uses a narrow projection from formal `VhsModel` defaults into the compact `SignalSettings` preview layer, plus a small set of model-only auxiliary terms for pre-emphasis, decode, and dropout handling.
+The current still pipeline uses a narrow projection from formal `VhsModel` defaults into the compact `SignalSettings` preview layer, plus a small set of model-only auxiliary terms for pre-emphasis, chroma phase, decode, and dropout handling.
 
 These are engineering approximations, not physical constants:
 
@@ -1031,6 +1055,12 @@ a_C = \min(1,\; 0.35 \cdot \sigma_C)
 \]
 
 \[
+\phi_E = \operatorname{radians}(\phi_{\mathrm{deg}})
+\qquad
+\sigma_\phi = \operatorname{radians}(\max(0,\; \sigma_{\phi,\mathrm{deg}}))
+\]
+
+\[
 q_D = \operatorname{clamp}(p_{\mathrm{drop}}, 0, 0.08)
 \qquad
 s_D = \min(48s_{\text{ref}}, 13.5\tau_D s_{\text{ref}})
@@ -1042,6 +1072,8 @@ where:
 - \(b_C\) is in kHz
 - \(\tau_C\) and \(\tau_J\) are in microseconds
 - \(\sigma_Y\) and \(\sigma_C\) are the formal luma/chroma noise sigmas projected into the preview amplitudes that the reconstruction shader reshapes into luma/chroma-specific contamination
+- \(\phi_{\mathrm{deg}}\) is `VhsChromaSettings.phase_error_deg`
+- \(\sigma_{\phi,\mathrm{deg}}\) is `VhsNoiseSettings.chroma_phase_noise_deg`
 
 These projection rules currently live across `crates/casseted-pipeline/src/projection.rs` and `crates/casseted-pipeline/src/stages.rs`:
 
@@ -1051,6 +1083,8 @@ These projection rules currently live across `crates/casseted-pipeline/src/proje
 - `chroma_bleed_from_bandwidth()`
 - `luma_noise_amount_from_sigma()`
 - `chroma_noise_amount_from_sigma()`
+- `chroma_phase_error_rad()`
+- `chroma_phase_noise_rad()`
 - `highlight_bleed_threshold()`
 - `highlight_bleed_amount()`
 - `dropout_line_probability()`
@@ -1058,7 +1092,7 @@ These projection rules currently live across `crates/casseted-pipeline/src/proje
 - `detail_mix_from_preemphasis()`
 
 Important runtime note:
-`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\beta_V\), \(\epsilon_{YC}\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs.
+`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\phi_E\), \(\beta_V\), \(\epsilon_{YC}\), \(\sigma_\phi\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs.
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.

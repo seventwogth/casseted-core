@@ -246,6 +246,8 @@ Important distinction:
 
 - a formal stage can be active while some fields in its owning group are still deferred
 - `InputDecode` is the clearest example: the still path already assumes gamma-coded `sRGB`, a BT.601-like matrix, and progressive still-frame semantics, but `VhsInputSettings` are not yet runtime selectors
+- some formal fields are now active without joining the preview control surface:
+  the chroma-phase terms bypass `SignalSettings` and resolve directly as model-only stage auxiliaries
 - transport, noise, and dropout are active only through the current still-frame spatial subset and the compact reconstruction approximation
 
 ## Mapping To The Current Pipeline
@@ -269,7 +271,7 @@ The current still-image pipeline now has an explicit narrow projection from `Vhs
 There are two intentional modes:
 
 - `StillImagePipeline::from_vhs_model()` keeps the current model-aligned subset active
-- `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection/dropout terms neutral
+- `StillImagePipeline::new(signal)` is a narrower manual preview path and keeps the model-only decode/projection/chroma-phase/dropout terms neutral
 
 Preview-specific guardrail rule:
 
@@ -301,13 +303,15 @@ Current stage-aligned mapping:
   `VhsChromaSettings.bandwidth_khz` -> stronger preview chroma bandwidth-loss proxy -> `effect.chroma_degradation.y`
   `VhsChromaSettings.saturation_gain` -> `effect.chroma_degradation.z`
   `VhsDecodeSettings.chroma_vertical_blend` -> `effect.chroma_degradation.w`
+  `VhsChromaSettings.phase_error_deg` -> model-only resolved radians -> `effect.reconstruction_aux.z`, applied as a restrained chroma-vector rotation at the chroma/reconstruction boundary inside `degrade_chroma()`
 - reconstruction / output:
   `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
   `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` -> restrained dropout probability / span terms -> `effect.reconstruction_aux.xy`
+  `VhsNoiseSettings.chroma_phase_noise_deg` -> model-only resolved radians -> `effect.reconstruction_aux.w`, applied as a low-band stochastic chroma-vector perturbation in `sample_reconstruction_contamination()`
 
 The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell integration / width, and restrained contamination from one bandwidth-loss proxy instead of expanding the public preview API.
 
-The final pass now treats its compact contract the same way: `effect.reconstruction_output.xy` resolve to contamination amplitudes, `effect.reconstruction_output.z` resolves to residual Y/C leakage, and `effect.reconstruction_aux.xy` resolve to the restrained dropout subset. The pass boundary stays the same, but the internal sequence is now explicit instead of reading like one catch-all helper.
+The final pass now treats its compact contract the same way: `effect.reconstruction_output.xy` resolve to contamination amplitudes, `effect.reconstruction_output.z` resolves to residual Y/C leakage, and `effect.reconstruction_aux` now carries both the restrained dropout subset (`xy`) and the chroma-phase auxiliaries (`zw`). The pass boundary stays the same, but the internal sequence is now explicit instead of reading like one catch-all helper.
 
 Secondary mappings that are still present but not the main focus of this phase:
 
@@ -319,8 +323,6 @@ Secondary mappings that are still present but not the main focus of this phase:
 Formal fields intentionally not projected into the current still runtime subset:
 
 - `VhsInputSettings.*`
-- `VhsChromaSettings.phase_error_deg`
-- `VhsNoiseSettings.chroma_phase_noise_deg`
 - `VhsTransportSettings.head_switching_*`
 - `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` once concrete preset values are already carried by the rest of the model
@@ -342,6 +344,7 @@ The current limited multi-pass still-image implementation is intentionally not b
 - luma softness and microcontrast loss
 - restrained highlight bleed that reads like scan-direction signal smear, not bloom
 - chroma bandwidth loss, cell-integrated horizontal chroma resolution loss, and restrained bleed / contamination
+- restrained chroma-phase instability in `Y/C` space rather than RGB-split decoration
 - only mild chroma misregistration
 - only mild transport wobble, noise contamination, and dropout
 
@@ -367,16 +370,14 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma two-scale low-pass/detail attenuation biased toward microcontrast loss, with restrained bright-edge lag and highlight bleed embedded in the same branch
-- chroma delay plus low-pass/cell-integrated reconstruction/contamination degradation biased toward bandwidth loss over misregistration
-- reconstruction back to RGB from a dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage that now backs off slightly inside active dropout concealment
+- chroma delay plus low-pass/cell-integrated reconstruction/contamination degradation biased toward bandwidth loss over misregistration, now with a restrained deterministic chroma-phase bias applied at the chroma/reconstruction boundary
+- reconstruction back to RGB from a dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, restrained local chroma-phase noise, and restrained Y/C leakage that now backs off slightly inside active dropout concealment
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for noise/dropout placement; it does not reapply transport resampling to luma/chroma textures
 
 Still deferred:
 
 - input-selector-driven runtime branching from `VhsInputSettings`
-- chroma phase error
-- chroma phase noise
 - head switching behavior
 - explicit output-transfer shaping
 - temporal model
@@ -392,7 +393,7 @@ The next step is to extend this signal-model-aligned subset deliberately, not to
 
 The most justified next implementation moves are:
 
-- activate the chroma-phase subset around `VhsChromaSettings.phase_error_deg` and `VhsNoiseSettings.chroma_phase_noise_deg` inside the existing chroma/reconstruction boundary
 - activate a restrained still-image head-switching subset from `VhsTransportSettings.head_switching_*` only if it can stay subordinate to bandwidth loss and tone shaping
+- decide later whether `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer` should become runtime selectors in still-image v1 or remain documented assumptions until a broader decode/output milestone exists
 
 All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).

@@ -76,6 +76,19 @@ fn sample_chroma(uv: vec2<f32>) -> vec2<f32> {
     return textureSample(chroma_texture, signal_sampler, clamped).xy;
 }
 
+fn rotate_chroma(chroma: vec2<f32>, angle_rad: f32) -> vec2<f32> {
+    if (abs(angle_rad) <= 1e-5) {
+        return chroma;
+    }
+
+    let sin_angle = sin(angle_rad);
+    let cos_angle = cos(angle_rad);
+    return vec2<f32>(
+        chroma.x * cos_angle - chroma.y * sin_angle,
+        chroma.x * sin_angle + chroma.y * cos_angle,
+    );
+}
+
 fn sample_reconstruction_signal(uv: vec2<f32>) -> ReconstructionSignal {
     var signal: ReconstructionSignal;
     signal.luma = sample_luma(uv);
@@ -116,6 +129,7 @@ fn sample_reconstruction_contamination(
 ) -> ReconstructionContamination {
     let frame_index = effect.frame.w;
     let clamped_luma = clamp(signal.luma, 0.0, 1.0);
+    let chroma_dropout_scale = mix(1.0, 0.45, dropout_mix);
 
     var contamination: ReconstructionContamination;
     contamination.luma = 0.0;
@@ -153,20 +167,30 @@ fn sample_reconstruction_contamination(
         let chroma_line_v =
             centered_hash(vec2<f32>(noise_coord.y * 0.5 + 131.0, frame_index + 31.0));
         let chroma_visibility = 0.55 + 0.25 * pow(1.0 - clamped_luma, 0.5);
-        let chroma_dropout_scale = mix(1.0, 0.45, dropout_mix);
         let chroma_additive = vec2<f32>(
             chroma_band_u * 0.72 + chroma_line_u * 0.28,
             chroma_band_v * 0.72 + chroma_line_v * 0.28,
         ) * effect.reconstruction_output.y
             * chroma_visibility
             * chroma_dropout_scale;
-        let phase_like = centered_hash(vec2<f32>(
-            floor(noise_coord.x * 0.14) + noise_coord.y * 0.12 + 149.0,
-            frame_index + 37.0,
-        ));
-        let chroma_phase = vec2<f32>(-signal.chroma.y, signal.chroma.x)
-            * (phase_like * effect.reconstruction_output.y * 0.45 * chroma_dropout_scale);
-        contamination.chroma = chroma_additive + chroma_phase;
+        contamination.chroma = chroma_additive;
+    }
+
+    if (effect.reconstruction_aux.w > 1e-5) {
+        // Keep phase noise in Y/C space so the instability reads like chroma
+        // decode wobble instead of spatial RGB splitting.
+        let phase_band = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 91.0),
+            0.05,
+            vec2<f32>(89.0, 0.17),
+        );
+        let phase_line =
+            centered_hash(vec2<f32>(noise_coord.y * 0.35 + 157.0, frame_index + 43.0));
+        let phase_perturbation = (phase_band * 0.74 + phase_line * 0.26)
+            * effect.reconstruction_aux.w
+            * chroma_dropout_scale;
+        let rotated_chroma = rotate_chroma(signal.chroma, phase_perturbation);
+        contamination.chroma = contamination.chroma + (rotated_chroma - signal.chroma);
     }
 
     return contamination;

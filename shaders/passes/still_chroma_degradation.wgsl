@@ -95,6 +95,19 @@ fn quadratic_b_spline_weights(phase: f32) -> vec3<f32> {
     );
 }
 
+fn rotate_chroma(chroma: vec2<f32>, angle_rad: f32) -> vec2<f32> {
+    if (abs(angle_rad) <= 1e-5) {
+        return chroma;
+    }
+
+    let sin_angle = sin(angle_rad);
+    let cos_angle = cos(angle_rad);
+    return vec2<f32>(
+        chroma.x * cos_angle - chroma.y * sin_angle,
+        chroma.x * sin_angle + chroma.y * cos_angle,
+    );
+}
+
 fn reconstruct_chroma_line(
     pixel_pos: vec2<f32>,
     span_px: f32,
@@ -146,6 +159,10 @@ fn reconstruct_chroma_line(
 fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
     let chroma_offset_px = effect.chroma_degradation.x;
     let chroma_blur_px = max(effect.chroma_degradation.y, 0.0);
+    // Still-image v1 treats formal chroma phase error as a restrained
+    // vector rotation at the chroma/reconstruction boundary rather than as a
+    // carrier-accurate decode model.
+    let phase_error_rad = effect.reconstruction_aux.z;
     let pixel_pos = uv * effect.frame.xy - vec2<f32>(0.5, 0.5);
     let chroma_center = pixel_pos + vec2<f32>(chroma_offset_px, 0.0);
     let edge_guard = local_luma_edge(pixel_pos);
@@ -154,11 +171,12 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
         let chroma_up = sample_chroma_px(chroma_center - vec2<f32>(0.0, 1.0));
         let chroma_down = sample_chroma_px(chroma_center + vec2<f32>(0.0, 1.0));
         let chroma_vertical = chroma_up * 0.18 + chroma_base * 0.64 + chroma_down * 0.18;
-        return mix(
+        let chroma_resolved = mix(
             chroma_base,
             chroma_vertical,
             effect.chroma_degradation.w,
-        ) * effect.chroma_degradation.z;
+        );
+        return rotate_chroma(chroma_resolved, phase_error_rad) * effect.chroma_degradation.z;
     }
 
     let chroma_bandwidth_mix = bandwidth_mix(chroma_blur_px);
@@ -198,11 +216,12 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
     let chroma_vertical = chroma_up * vertical_neighbor_weight
         + chroma_line * vertical_center_weight
         + chroma_down * vertical_neighbor_weight;
-    return mix(
+    let chroma_resolved = mix(
         chroma_line,
         chroma_vertical,
         effect.chroma_degradation.w,
-    ) * effect.chroma_degradation.z;
+    );
+    return rotate_chroma(chroma_resolved, phase_error_rad) * effect.chroma_degradation.z;
 }
 
 @vertex
