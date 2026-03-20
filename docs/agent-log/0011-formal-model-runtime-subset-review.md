@@ -11,6 +11,9 @@ implemented in the repository working tree
 Agent commit status:
 no git commit was created by the agent during this stage. Future entries in this directory should list any agent-created commits explicitly when they exist.
 
+Historical note:
+this review predates the later activation milestones recorded in `0012` and `0013`. Any references below to chroma-phase or head-switching fields as deferred are accurate for this review snapshot on 2026-03-20, but they are no longer the current repository-wide status.
+
 ## Why this stage was needed
 
 The architecture, limited multi-pass split, and compiled runtime layer had already settled into a good shape. The next risk was no longer pass structure. It was clarity:

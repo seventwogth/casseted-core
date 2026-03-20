@@ -331,6 +331,32 @@ fn head_switching_terms_bypass_preview_projection_but_change_runtime_stage_state
 }
 
 #[test]
+fn head_switching_terms_pack_into_documented_runtime_uniform_lanes() {
+    let input = gradient_rgba8_image(FrameSize::new(720, 480));
+    let mut base_model = VhsModel::default();
+    base_model.transport.head_switching_band_lines = 0;
+    base_model.transport.head_switching_offset_us = 0.0;
+    let mut switching_model = base_model;
+    switching_model.transport.head_switching_band_lines = 12;
+    switching_model.transport.head_switching_offset_us = 2.0;
+
+    let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
+    let switching_pipeline = StillImagePipeline::from_vhs_model(switching_model);
+    let base_uniforms = effect_uniforms(&input, &base_pipeline);
+    let switching_uniforms = effect_uniforms(&input, &switching_pipeline);
+
+    assert_eq!(
+        base_pipeline.preview_base_signal(),
+        switching_pipeline.preview_base_signal()
+    );
+    assert_eq!(base_uniforms.frame[2], 0.0);
+    assert_eq!(base_uniforms.reconstruction_output[3], 0.0);
+    assert_eq!(switching_uniforms.frame[2], 12.0);
+    assert!((switching_uniforms.reconstruction_output[3] - 27.0).abs() < 1e-6);
+    assert_ne!(base_uniforms, switching_uniforms);
+}
+
+#[test]
 fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset() {
     let input = gradient_rgba8_image(FrameSize::new(720, 480));
     let base_model = VhsModel::default();
