@@ -33,7 +33,7 @@ Those five stages are now executed as a limited four-pass runtime.
 | Physical pass | Primary output | Logical implementation stages covered | Formal v1 stage coverage |
 | --- | --- | --- | --- |
 | `still_input_conditioning` | working YUV texture | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, and the current still-frame spatial subset of `TransportInstability` |
-| `still_luma_degradation` | degraded luma texture | luma degradation with restrained highlight bleed | `LumaRecordPath` |
+| `still_luma_degradation` | degraded luma texture | luma degradation via two-scale low-pass/detail attenuation with restrained bright-edge lag and highlight bleed | `LumaRecordPath` |
 | `still_chroma_degradation` | degraded chroma texture | chroma degradation via low-pass, coarse chroma reconstruction, restrained smear, and optional vertical line blend | `ChromaRecordPath` |
 | `still_reconstruction_output` | final `RGBA8` output | reconstruction / output with brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout concealment | `NoiseAndDropouts` (refined noise contamination + still-image dropout subset) and `DecodeOutput` |
 

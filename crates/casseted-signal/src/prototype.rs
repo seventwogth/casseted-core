@@ -73,7 +73,10 @@ impl ToneSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LumaSettings {
-    /// Horizontal luma blur radius proxy in reference-width pixels.
+    /// Legacy preview control name for the shared luma bandwidth-loss proxy in
+    /// reference-width pixels. The current luma pass expands this into a
+    /// horizontal low-pass span plus multi-band detail attenuation rather than
+    /// treating it as a plain post-process blur radius.
     pub blur_px: f32,
 }
 

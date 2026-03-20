@@ -206,6 +206,9 @@ fn resolve_luma_degradation_stage(
     reference_scale: f32,
     model: Option<VhsModel>,
 ) -> LumaDegradationStage {
+    // Keep the luma contract compact: the shader now expands this one
+    // bandwidth-loss proxy plus the pre-emphasis-derived recovery mix into a
+    // broader low-pass / residual attenuation approximation.
     let detail_mix = model
         .map(|vhs| detail_mix_from_preemphasis(vhs.luma.preemphasis_db))
         .unwrap_or(0.0);

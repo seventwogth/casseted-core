@@ -54,7 +54,7 @@ Committed fixtures now live in `assets/reference-images/still-pipeline-v1/`.
 | --- | --- | --- | --- | --- |
 | Input conditioning / tone shaping | `input-conditioning-tone.png` | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.64`, `rho_h = 0.62`, `p_J = 0.35 * s_ref`, `delta_V = 0.25` |
 | Luma/chroma transform | `luma-chroma-transform.png` | `4.2` | none beyond the shared frame block; this is the neutral transform fixture for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
-| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363` |
+| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363`; the shader derives low/mid/fine-band luma attenuation from that compact state |
 | Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
 | Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2`, `5.3` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
 
@@ -113,10 +113,11 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 
 | Symbol | Meaning | Current source |
 | --- | --- | --- |
-| \(r_Y\) | resolved luma blur radius in pixels | `SignalSettings.luma.blur_px * s_ref` |
+| \(r_Y\) | resolved luma bandwidth-loss proxy in pixels | `SignalSettings.luma.blur_px * s_ref` |
+| \(\Delta_Y\) | derived luma sample step in pixels | `max(0.5, 0.55 * r_Y + 0.45)` |
+| \(\eta_Y\) | derived luma bandwidth mix | `r_Y / (r_Y + 1.35)` |
 | \(\theta_H\) | resolved highlight-bleed threshold | `clamp(k_h + 0.12, 0.72, 0.96)` |
 | \(\beta_H\) | resolved highlight-bleed amount | `min(0.16, (p_Y / (p_Y + 1.25)) * (0.06 + 0.14 * rho_h / (rho_h + 1)))` |
-| \(\Delta_H\) | highlight-bleed smear step in pixels | `max(0.85, 0.9 * r_Y + 0.65)` |
 | \(r_\tau\) | resolved chroma delay in pixels | `SignalSettings.chroma.offset_px * s_ref` |
 | \(r_C\) | resolved chroma bandwidth-loss proxy in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
 | \(r_L\) | derived chroma low-pass span | `0.35 + 0.85 * r_C` for the bandwidth-loss branch |
@@ -133,8 +134,8 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | `effect.input_conditioning.y` | `highlight_compression >= 0` |
 | `effect.input_conditioning.z` | model-projected line jitter is non-negative and intentionally attenuated in the still path; manual preview values are further soft-capped into an effective range |
 | `effect.input_conditioning.w` | vertical offset snapshot is signed; manual preview values are soft-capped into an effective range |
-| `effect.luma_degradation.x` | resolved blur radius `>= 0`; manual preview values are softly capped at high magnitudes |
-| `effect.luma_degradation.y` | detail mix derived from pre-emphasis and clamped to `[0, 0.12]` |
+| `effect.luma_degradation.x` | resolved luma bandwidth-loss proxy `>= 0`; manual preview values are softly capped at high magnitudes |
+| `effect.luma_degradation.y` | detail recovery mix derived from pre-emphasis and clamped to `[0, 0.12]` |
 | `effect.luma_degradation.z` | derived highlight-bleed threshold, clamped to `[0.72, 0.96]` |
 | `effect.luma_degradation.w` | derived highlight-bleed amount, clamped to `[0, 0.16]` |
 | `effect.chroma_degradation.x` | current model projection preserves the sign of `VhsChromaSettings.delay_us` and remains intentionally attenuated relative to blur; manual preview values use a signed soft cap |
@@ -274,47 +275,62 @@ Purpose:
 reduce horizontal luma detail and microcontrast without collapsing large-scale structure.
 
 Mathematical meaning:
-apply a compact 5-tap horizontal low-pass filter in the luma branch, optionally add a small edge residual derived from the model pre-emphasis term, then add a restrained highlight-gated directional bleed term.
+apply a compact horizontal luma bandwidth approximation built from:
 
-The current shader evaluates luma samples at:
+- a broader symmetric low-pass baseline
+- a narrower mid-band estimate
+- separate attenuation of mid-band and fine-band residual detail
+- a small bright-edge lag bias on the low-pass branch
+- a restrained highlight-gated directional bleed term that now depends on bright contour energy rather than bright plateaus alone
+
+For \(r_Y > \varepsilon\), the current shader evaluates luma samples at:
 
 \[
-Y_{-2}, Y_{-1}, Y_0, Y_{+1}, Y_{+2}
+Y_{-3}, Y_{-2}, Y_{-1}, Y_0, Y_{+1}, Y_{+2}, Y_{+3}
 \]
 
 with offsets:
 
 \[
-x + \{-2r_Y, -r_Y, 0, r_Y, 2r_Y\}
+x + \{-3\Delta_Y, -2\Delta_Y, -\Delta_Y, 0, \Delta_Y, 2\Delta_Y, 3\Delta_Y\}
 \]
 
 where:
 
 \[
+\Delta_Y = \max(0.5,\; 0.55r_Y + 0.45)
+\]
+
+and:
+
+\[
 r_Y = s_{\text{ref}} \cdot p_Y
 \]
 
-and \(p_Y = \texttt{SignalSettings.luma.blur\_px}\).
+with \(p_Y = \texttt{SignalSettings.luma.blur\_px}\).
 
-The low-pass output is:
-
-\[
-H_Y = 0.15Y_{-2} + 0.22Y_{-1} + 0.26Y_0 + 0.22Y_{+1} + 0.15Y_{+2}
-\]
-
-The compact detail residual is:
+The broad low-pass baseline is:
 
 \[
-D_Y = Y_0 - (0.25Y_{-1} + 0.5Y_0 + 0.25Y_{+1})
+L_Y =
+0.06Y_{-3} + 0.12Y_{-2} + 0.18Y_{-1} + 0.28Y_0
++ 0.18Y_{+1} + 0.12Y_{+2} + 0.06Y_{+3}
 \]
 
-The base luma approximation is:
+The narrower mid-band estimate is:
 
 \[
-Y_B = \operatorname{clamp}(H_Y + \alpha_p D_Y, 0, 1)
+M_Y =
+0.10Y_{-2} + 0.22Y_{-1} + 0.36Y_0 + 0.22Y_{+1} + 0.10Y_{+2}
 \]
 
-The current projection from the formal pre-emphasis setting is:
+The luma bandwidth-loss mix is:
+
+\[
+\eta_Y = \frac{r_Y}{r_Y + 1.35}
+\]
+
+The pre/de-emphasis projection is still:
 
 \[
 \alpha_p = \operatorname{clamp}(0.015 \cdot p_{\text{db}}, 0, 0.12)
@@ -322,7 +338,57 @@ The current projection from the formal pre-emphasis setting is:
 
 where \(p_{\text{db}} = \texttt{VhsLumaSettings.preemphasis\_db}\).
 
-To keep bright luma from staying too clean after the bandwidth loss, the same pass derives a restrained highlight-bleed term from the current tone and luma settings instead of introducing a separate bloom-like control:
+The shader normalizes that compact pre-emphasis term into a recovery mix:
+
+\[
+\hat{\alpha}_p = \operatorname{clamp}\left(\frac{\alpha_p}{0.12}, 0, 1\right)
+\]
+
+Bright luma can also bias the low-pass branch slightly toward prior horizontal samples so strong bright contours feel more analog-lagged before the explicit bleed term is added:
+
+\[
+\lambda_H =
+M_H(\max(Y_{-1}, Y_0); \theta_H)\; 0.18 \eta_Y
+\]
+
+\[
+L_Y^{\leftarrow} =
+0.09Y_{-3} + 0.16Y_{-2} + 0.22Y_{-1} + 0.26Y_0
++ 0.16Y_{+1} + 0.08Y_{+2} + 0.03Y_{+3}
+\]
+
+\[
+\bar{L}_Y = (1 - \lambda_H)L_Y + \lambda_H L_Y^{\leftarrow}
+\]
+
+The residual bands are then:
+
+\[
+D_M = M_Y - \bar{L}_Y
+\]
+
+\[
+D_F = Y_0 - M_Y
+\]
+
+with gains:
+
+\[
+g_M = \operatorname{clamp}\left(1 - \eta_Y (0.46 - 0.20\hat{\alpha}_p), 0.30, 1\right)
+\]
+
+\[
+g_F = \operatorname{clamp}\left(1 - \eta_Y (0.88 - 0.34\hat{\alpha}_p), 0.10, 1\right)
+\cdot \left(1 - M_H(\max(Y_{-1}, Y_0); \theta_H)(0.10 + 0.08\eta_Y)\right)
+\]
+
+The base luma approximation is:
+
+\[
+Y_B = \operatorname{clamp}(\bar{L}_Y + g_M D_M + g_F D_F, 0, 1)
+\]
+
+To keep bright contours from staying too clean after the bandwidth loss, the same pass then derives a restrained directional bleed term from the current tone and luma settings instead of introducing a separate bloom-like control:
 
 \[
 \theta_H = \operatorname{clamp}(k_h + 0.12, 0.72, 0.96)
@@ -337,10 +403,6 @@ To keep bright luma from staying too clean after the bandwidth loss, the same pa
 \]
 
 \[
-\Delta_H = \max(0.85,\; 0.9r_Y + 0.65)
-\]
-
-\[
 M_H(Y;\theta_H) = \operatorname{clamp}\left(
 \frac{Y - \theta_H}{\max(1 - \theta_H, \varepsilon)},
 0,
@@ -349,31 +411,38 @@ M_H(Y;\theta_H) = \operatorname{clamp}\left(
 \]
 
 \[
-B_H(x, y) =
-0.52M_H(Y(x - \Delta_H, y); \theta_H)
-+ 0.28M_H(Y(x - 2\Delta_H, y); \theta_H)
-+ 0.12M_H(Y(x - 3.5\Delta_H, y); \theta_H)
-+ 0.08M_H(Y(x, y); \theta_H)
+H_H =
+0.56M_H(Y_{-1}; \theta_H)
++ 0.28M_H(Y_{-2}; \theta_H)
++ 0.10M_H(Y_{-3}; \theta_H)
++ 0.06M_H(Y_0; \theta_H)
+\]
+
+\[
+E_H =
+0.60\max(Y_{-1} - Y_B, 0)
++ 0.28\max(Y_{-2} - Y_B, 0)
++ 0.12\max(Y_{-3} - Y_B, 0)
 \]
 
 \[
 Y_L = \operatorname{clamp}\left(
-Y_B + \beta_H B_H(x, y)(1 - Y_B),
+Y_B + \beta_H H_H E_H (1 - 0.82Y_B),
 0,
 1
 \right)
 \]
 
-The asymmetry is intentional: the shader samples only the current pixel and preceding horizontal samples for the bleed term so bright edges smear in scan direction instead of blooming isotropically.
+The asymmetry is intentional: the shader biases only toward preceding horizontal samples for the bright-edge lag and bleed terms, so bright contours smear in scan direction instead of blooming isotropically. Using both \(H_H\) and \(E_H\) keeps flat highlight plateaus from glowing as aggressively as actual bright edges.
 
 Visual effect:
-horizontal softening, less digital crispness, reduced microcontrast in fine textures, and restrained bright-edge smear that reads as signal spill rather than post-process glow.
+horizontal band limitation, reduced digital crispness, stronger fine-texture microcontrast loss than mid-scale structure loss, and restrained bright-edge smear that reads as signal spill rather than post-process glow.
 
 Signal motivation:
-high for the low-pass concept, medium for the exact kernel.
+high for luma-oriented bandwidth limitation and bright-edge asymmetry, medium for the exact discrete kernels and gain curves.
 
 Engineering approximation:
-the shader uses a compact weighted FIR-like kernel plus a thresholded directional highlight spill instead of a calibrated analog transfer function or a separate bloom pass.
+the shader now uses a compact two-scale FIR-like decomposition with gain-shaped residual attenuation and contour-gated directional highlight spill instead of a calibrated analog transfer function, temporal filter, or separate bloom pass.
 
 Pipeline / shader mapping:
 
@@ -813,7 +882,7 @@ Pipeline / shader mapping:
 | `InputDecode` | implicit working assumptions in `resolve_still_stages()` and the first-pass working-signal write | `still_input_conditioning.wgsl` |
 | `ToneShaping` | `SignalSettings.tone` + `effect.input_conditioning.xy` | `soft_highlight_knee()`, `apply_tone_shaping()` |
 | `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
-| `LumaRecordPath` | `SignalSettings.luma.blur_px` + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
+| `LumaRecordPath` | `SignalSettings.luma.blur_px` bandwidth-loss proxy + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
 | `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` and `apply_input_conditioning()` |
 | `NoiseAndDropouts` | brightness-shaped luma contamination and softer band-correlated chroma contamination from `SignalSettings.noise.*`, plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_output_noise()`, `line_dropout_mask()`, `apply_dropout()` |
@@ -825,7 +894,7 @@ Implemented now:
 
 - tone shaping with soft highlight compression
 - BT.601-like working `YUV` decomposition
-- luma low-pass/detail attenuation with restrained highlight bleed
+- luma two-scale low-pass/detail attenuation with restrained highlight bleed
 - delayed and blurred chroma path with saturation control
 - reconstruction back to RGB
 - line jitter, brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout handling

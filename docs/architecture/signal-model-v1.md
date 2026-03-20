@@ -147,7 +147,7 @@ Purpose:
 reduce horizontal detail and microcontrast while keeping image structure intact.
 
 Current v1 shape:
-compact horizontal low-pass plus a very small pre/de-emphasis-inspired residual term, extended by a highlight-gated asymmetric bleed approximation that only activates around bright luma.
+two-scale horizontal luma low-pass decomposition with stronger fine-detail attenuation than mid-band structure attenuation, plus a restrained bright-edge lag/bleed approximation that only leans on preceding bright contours.
 
 ### 5. ChromaRecordPath
 
@@ -283,8 +283,8 @@ Current stage-aligned mapping:
 - input conditioning / tone shaping:
   `VhsToneSettings` -> `SignalSettings.tone` -> `effect.input_conditioning.xy`
 - luma degradation:
-  `VhsLumaSettings.bandwidth_mhz` -> stronger preview luma blur proxy -> `effect.luma_degradation.x`
-  `VhsLumaSettings.preemphasis_db` -> restrained detail residual gain -> `effect.luma_degradation.y`
+  `VhsLumaSettings.bandwidth_mhz` -> stronger preview luma bandwidth-loss proxy -> `effect.luma_degradation.x`
+  `VhsLumaSettings.preemphasis_db` -> restrained detail recovery mix -> `effect.luma_degradation.y`
   existing tone + luma terms -> derived highlight-bleed threshold / amount -> `effect.luma_degradation.zw`
 - chroma degradation:
   `VhsChromaSettings.delay_us` -> signed attenuated preview chroma offset proxy -> `effect.chroma_degradation.x`
@@ -295,7 +295,7 @@ Current stage-aligned mapping:
   `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
   `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` -> restrained dropout probability / span terms -> `effect.reconstruction_aux.xy`
 
-The chroma pass keeps that uniform contract compact on purpose: the shader derives low-pass span, effective chroma cell width, and restrained smear from the same bandwidth-loss proxy instead of expanding the public preview API.
+The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell width, and restrained smear from one bandwidth-loss proxy instead of expanding the public preview API.
 
 Secondary mappings that are still present but not the main focus of this phase:
 
@@ -345,7 +345,7 @@ Scene-level calibration notes for the current limited multi-pass path:
 The current repository now implements a reference-consistent subset of v1 as five logical stages executed through four WGSL passes:
 
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
-- luma low-pass/detail attenuation biased toward microcontrast loss, with restrained highlight bleed embedded in the same branch
+- luma two-scale low-pass/detail attenuation biased toward microcontrast loss, with restrained bright-edge lag and highlight bleed embedded in the same branch
 - chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
 - reconstruction back to RGB with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
