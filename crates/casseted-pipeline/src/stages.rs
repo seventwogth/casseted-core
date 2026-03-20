@@ -46,7 +46,8 @@ pub(crate) struct LumaDegradationStage {
 pub(crate) struct ChromaDegradationStage {
     pub(crate) offset_px: f32,
     // Shared chroma bandwidth-loss proxy. The chroma shader derives its
-    // horizontal low-pass span and coarse reconstruction cell size from this.
+    // horizontal low-pass span, coarse cell integration / reconstruction, and
+    // restrained contamination tail from this one compact term.
     pub(crate) blur_px: f32,
     pub(crate) saturation: f32,
     pub(crate) vertical_blend: f32,
@@ -237,7 +238,8 @@ fn resolve_chroma_degradation_stage(
     ChromaDegradationStage {
         offset_px: signal.chroma.offset_px * reference_scale,
         // Keep the stage contract compact: the pass now expands this one proxy
-        // into low-pass, coarse chroma resolution loss, and restrained smear.
+        // into low-pass, coarse chroma resolution loss, and restrained
+        // luma-anchored smear / contamination.
         blur_px: signal.chroma.bleed_px.max(0.0) * reference_scale,
         saturation: signal.chroma.saturation.max(0.0),
         vertical_blend,
