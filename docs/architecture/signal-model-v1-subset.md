@@ -83,6 +83,7 @@ Use this as the field-level companion to:
   Why partial: it becomes a bounded horizontal switching displacement plus mild chroma-support loss inside the lower switching band, not a full timing relock, tearing bar, or decoder-accurate head-switching model.
 - `TransportInstability` overall
   Runtime status: only the spatial still-image subset is active. The global still-frame jitter/vertical offset terms remain fused into `still_input_conditioning.wgsl`, while the lower-band head-switching approximation is inserted later in `still_reconstruction_output.wgsl` as a compact model-only transport-side auxiliary.
+  Current status note: no `head_switching_*` field remains in `Deferred / Documented Only`; what remains deferred is only a fuller timing-/deck-accurate head-switching model.
 
 ### Noise / dropout parameters
 
