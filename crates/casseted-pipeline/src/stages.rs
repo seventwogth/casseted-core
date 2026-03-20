@@ -51,6 +51,7 @@ pub(crate) struct ChromaDegradationStage {
     pub(crate) blur_px: f32,
     pub(crate) saturation: f32,
     pub(crate) vertical_blend: f32,
+    pub(crate) phase_error_rad: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +61,7 @@ pub(crate) struct ReconstructionOutputStage {
     pub(crate) y_c_leakage: f32,
     pub(crate) dropout_line_probability: f32,
     pub(crate) dropout_span_px: f32,
+    pub(crate) chroma_phase_noise_rad: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,8 +110,11 @@ impl From<ResolvedStillStages> for EffectUniforms {
             reconstruction_aux: [
                 stages.reconstruction_output.dropout_line_probability,
                 stages.reconstruction_output.dropout_span_px,
-                0.0,
-                0.0,
+                // Keep the shared block compact: the model-only chroma-phase
+                // terms reuse the auxiliary spill lanes instead of widening the
+                // preview-facing stage surface.
+                stages.chroma_degradation.phase_error_rad,
+                stages.reconstruction_output.chroma_phase_noise_rad,
             ],
         }
     }
@@ -234,6 +239,9 @@ fn resolve_chroma_degradation_stage(
     let vertical_blend = model
         .map(|vhs| vhs.decode.chroma_vertical_blend.clamp(0.0, 1.0))
         .unwrap_or(0.0);
+    let phase_error_rad = model
+        .map(|vhs| chroma_phase_error_rad(vhs.chroma.phase_error_deg))
+        .unwrap_or(0.0);
 
     ChromaDegradationStage {
         offset_px: signal.chroma.offset_px * reference_scale,
@@ -243,6 +251,7 @@ fn resolve_chroma_degradation_stage(
         blur_px: signal.chroma.bleed_px.max(0.0) * reference_scale,
         saturation: signal.chroma.saturation.max(0.0),
         vertical_blend,
+        phase_error_rad,
     }
 }
 
@@ -263,6 +272,9 @@ fn resolve_reconstruction_output_stage(
             )
         })
         .unwrap_or((0.0, 0.0));
+    let chroma_phase_noise_rad = model
+        .map(|vhs| chroma_phase_noise_rad(vhs.noise.chroma_phase_noise_deg))
+        .unwrap_or(0.0);
 
     ReconstructionOutputStage {
         luma_contamination_amount: signal.noise.luma_amount.max(0.0),
@@ -270,11 +282,20 @@ fn resolve_reconstruction_output_stage(
         y_c_leakage,
         dropout_line_probability,
         dropout_span_px,
+        chroma_phase_noise_rad,
     }
 }
 
 fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
     (preemphasis_db.max(0.0) * 0.015).min(0.12)
+}
+
+fn chroma_phase_error_rad(phase_error_deg: f32) -> f32 {
+    phase_error_deg.to_radians()
+}
+
+fn chroma_phase_noise_rad(chroma_phase_noise_deg: f32) -> f32 {
+    chroma_phase_noise_deg.max(0.0).to_radians()
 }
 
 fn highlight_bleed_threshold(highlight_soft_knee: f32) -> f32 {

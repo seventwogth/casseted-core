@@ -61,8 +61,11 @@ Use this as the field-level companion to:
 - `VhsChromaSettings.bandwidth_khz`
   Runtime path: `chroma_bleed_from_bandwidth()` -> `SignalSettings.chroma.bleed_px` -> `effect.chroma_degradation.y`.
   Why partial: the shader expands one bandwidth-loss proxy into low-pass span, coarse cell size, integration step, and restrained smear instead of implementing a carrier-accurate chroma bandwidth model.
+- `VhsChromaSettings.phase_error_deg`
+  Runtime path: model-only resolved radians -> `effect.reconstruction_aux.z` -> `rotate_chroma()` in `still_chroma_degradation.wgsl`.
+  Why partial: the live effect is a direct UV-plane rotation of the degraded chroma vector at the chroma/reconstruction boundary, not a carrier-reference or decoder-locked phase model.
 - `ChromaRecordPath` overall
-  Runtime status: active as a compact `prefilter -> cell integration -> coarse reconstruction -> restrained trailing contamination -> optional vertical blend` approximation, not as a full chroma-carrier path.
+  Runtime status: active as a compact `prefilter -> cell integration -> coarse reconstruction -> restrained trailing contamination -> optional vertical blend -> restrained phase bias` approximation, not as a full chroma-carrier path.
 
 ### Tracking / transport parameters
 
@@ -82,7 +85,10 @@ Use this as the field-level companion to:
   Why partial: the final pass reshapes it into brightness-weighted, partly line/band-correlated reconstruction contamination instead of injecting raw white-noise sigma.
 - `VhsNoiseSettings.chroma_sigma`
   Runtime path: `chroma_noise_amount_from_sigma()` -> `SignalSettings.noise.chroma_amount` -> `effect.reconstruction_output.y`.
-  Why partial: the current still path attenuates and broadens it into softer chroma contamination plus a small phase-like perturbation.
+  Why partial: the current still path attenuates and broadens it into softer additive chroma contamination instead of injecting raw chroma-noise sigma.
+- `VhsNoiseSettings.chroma_phase_noise_deg`
+  Runtime path: model-only resolved radians -> `effect.reconstruction_aux.w` -> low-band chroma-vector perturbation in `sample_reconstruction_contamination()`.
+  Why partial: the runtime maps the formal sigma into a bounded, line/band-correlated local phase perturbation of the current chroma vector rather than simulating stochastic carrier-phase noise directly.
 - `VhsNoiseSettings.dropout_probability_per_line`
   Runtime path: `effect.reconstruction_aux.x` -> `line_dropout_mask()`.
 - `VhsNoiseSettings.dropout_mean_span_us`
@@ -95,7 +101,9 @@ Use this as the field-level companion to:
 
 - `StillImagePipeline::from_vhs_model()` activates the model-backed subset above.
 - `StillImagePipeline::new(SignalSettings)` keeps model-only auxiliaries neutral:
-  luma `detail_mix`, chroma `vertical_blend`, Y/C leakage, and dropout terms stay at zero unless a formal model is present.
+  luma `detail_mix`, chroma `vertical_blend`, chroma-phase auxiliaries, Y/C leakage, and dropout terms stay at zero unless a formal model is present.
+- `preview_base_signal()` still ignores the formal chroma-phase terms on purpose:
+  they bypass the compact preview control surface and resolve only during stage packing.
 - preview guardrails remain active only on the compact preview surface; they do not redefine the formal model.
 
 ## Deferred / Documented Only
@@ -109,8 +117,6 @@ Use this as the field-level companion to:
 
 ### Chroma / transport / decode fields
 
-- `VhsChromaSettings.phase_error_deg`
-- `VhsNoiseSettings.chroma_phase_noise_deg`
 - `VhsTransportSettings.head_switching_band_lines`
 - `VhsTransportSettings.head_switching_offset_us`
 - `VhsDecodeSettings.output_transfer`
@@ -124,7 +130,7 @@ Use this as the field-level companion to:
 
 ## Most Justified Next Activations
 
-1. `phase_error_deg` + `chroma_phase_noise_deg`
-   Why next: they are the clearest remaining chroma-side formal fields, they fit naturally inside the existing chroma/reconstruction boundary, and they can deepen the color path without adding passes or widening the public preview API.
-2. `head_switching_*`
+1. `head_switching_*`
    Why next: they are the strongest remaining spatial transport terms already present in the formal model, and they can be introduced as a restrained still-image bottom-band subset without forcing video/temporal architecture.
+2. `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer`
+   Why next: they are the clearest remaining decode-side selectors once the current chroma-phase gap is closed, but they should still be activated only if the still-image assumptions stay explicit and compact.

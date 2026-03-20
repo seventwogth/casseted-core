@@ -224,6 +224,11 @@ impl StageReferenceCase {
                     "chroma_degradation.vertical_blend",
                 );
                 assert_approx_eq(
+                    stages.chroma_degradation.phase_error_rad,
+                    0.0,
+                    "chroma_degradation.phase_error_rad",
+                );
+                assert_approx_eq(
                     stages.reconstruction_output.luma_contamination_amount,
                     0.0,
                     "reconstruction_output.luma_contamination_amount",
@@ -247,6 +252,11 @@ impl StageReferenceCase {
                     stages.reconstruction_output.dropout_span_px,
                     0.0,
                     "reconstruction_output.dropout_span_px",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.chroma_phase_noise_rad,
+                    0.0,
+                    "reconstruction_output.chroma_phase_noise_rad",
                 );
             }
             Self::LumaChromaTransform => {
@@ -325,6 +335,11 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.dropout_span_px",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.chroma_phase_noise_rad,
+                    0.0,
+                    "reconstruction_output.chroma_phase_noise_rad",
+                );
             }
             Self::LumaDegradation => {
                 assert_approx_eq(
@@ -372,6 +387,11 @@ impl StageReferenceCase {
                     0.0,
                     "reconstruction_output.dropout_span_px",
                 );
+                assert_approx_eq(
+                    stages.reconstruction_output.chroma_phase_noise_rad,
+                    0.0,
+                    "reconstruction_output.chroma_phase_noise_rad",
+                );
             }
             Self::ChromaDegradation => {
                 assert_approx_eq(
@@ -395,6 +415,11 @@ impl StageReferenceCase {
                     "chroma_degradation.vertical_blend",
                 );
                 assert_approx_eq(
+                    stages.chroma_degradation.phase_error_rad,
+                    0.0,
+                    "chroma_degradation.phase_error_rad",
+                );
+                assert_approx_eq(
                     stages.reconstruction_output.y_c_leakage,
                     0.0,
                     "reconstruction_output.y_c_leakage",
@@ -408,6 +433,11 @@ impl StageReferenceCase {
                     stages.reconstruction_output.dropout_span_px,
                     0.0,
                     "reconstruction_output.dropout_span_px",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.chroma_phase_noise_rad,
+                    0.0,
+                    "reconstruction_output.chroma_phase_noise_rad",
                 );
             }
             Self::ReconstructionOutput => {
@@ -440,6 +470,11 @@ impl StageReferenceCase {
                     stages.reconstruction_output.dropout_span_px,
                     3.24,
                     "reconstruction_output.dropout_span_px",
+                );
+                assert_approx_eq(
+                    stages.reconstruction_output.chroma_phase_noise_rad,
+                    0.0,
+                    "reconstruction_output.chroma_phase_noise_rad",
                 );
             }
         }
