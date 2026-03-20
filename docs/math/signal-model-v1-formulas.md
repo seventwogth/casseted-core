@@ -1139,6 +1139,7 @@ Partially active / approximated:
 - `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` through restrained local still-image dropout concealment
 - derived highlight bleed from the current tone + luma state
 - both chroma phase terms remain intentionally in `Partially Active / Approximated`, not `Fully Active`, because the runtime uses still-image UV-domain phase approximations rather than a full analog carrier/decode phase model
+- both head-switching terms also remain intentionally in `Partially Active / Approximated`, not `Fully Active`, because the runtime uses a restrained lower-band seam/disturbance approximation rather than a field-timing or deck-accurate switching model
 
 Documented here but not implemented yet:
 

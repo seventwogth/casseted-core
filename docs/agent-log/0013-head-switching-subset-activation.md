@@ -6,6 +6,9 @@ Date: 2026-03-20
 
 Activated the formal `VhsTransportSettings.head_switching_*` subset inside the existing still-image runtime as a restrained lower-frame transport-side approximation.
 
+Current-state note:
+this log supersedes earlier historical notes that described `head_switching_*` as deferred. Those older entries remain useful as milestone history, but they no longer describe the active runtime subset.
+
 The implementation stays intentionally compact:
 
 - no temporal or video model
