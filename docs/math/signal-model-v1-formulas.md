@@ -761,7 +761,7 @@ the reconstruction pass reuses the same conditioned line phase only to derive pr
 ### 5.2 Head-Switching Approximation
 
 Purpose:
-activate the formal `head_switching_*` subset as a restrained lower-frame transport-side imperfection without introducing field timing, sequence state, or a decorative glitch bar.
+define the active formal `head_switching_*` subset as a restrained lower-frame transport-side imperfection without introducing field timing, sequence state, or a decorative glitch bar.
 
 Mathematical meaning:
 derive one bottom-band support mask from the formal band height, use the formal offset as a bounded horizontal displacement inside that band, and reduce chroma support there more than luma support so the result reads like a switching-adjacent seam rather than like random dropout.
