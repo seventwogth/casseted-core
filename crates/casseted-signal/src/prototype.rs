@@ -95,8 +95,9 @@ pub struct ChromaSettings {
     /// Horizontal chroma delay proxy in reference-width pixels.
     pub offset_px: f32,
     /// Legacy preview control name for the shared chroma bandwidth-loss proxy.
-    /// The current chroma pass derives both horizontal low-pass span and
-    /// effective coarse chroma resolution from this value.
+    /// The current chroma pass derives horizontal low-pass span, effective
+    /// coarse chroma cell integration / resolution, and restrained trailing
+    /// contamination from this value.
     pub bleed_px: f32,
     /// Post-blur chroma gain. `1.0` keeps chroma magnitude neutral.
     pub saturation: f32,

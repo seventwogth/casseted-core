@@ -155,7 +155,7 @@ Purpose:
 make chroma lower-fidelity and less well-registered than luma.
 
 Current v1 shape:
-chroma delay, horizontal low-pass, coarse horizontal chroma reconstruction, restrained smear / bleed, chroma saturation scaling, and optional vertical line blend.
+chroma delay, horizontal low-pass, cell-integrated coarse chroma reconstruction, restrained trailing contamination with luma-edge restraint, chroma saturation scaling, and optional vertical line blend.
 
 ### 6. TransportInstability
 
@@ -295,7 +295,7 @@ Current stage-aligned mapping:
   `VhsDecodeSettings.luma_chroma_crosstalk` -> `effect.reconstruction_output.z`
   `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` -> restrained dropout probability / span terms -> `effect.reconstruction_aux.xy`
 
-The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell width, and restrained smear from one bandwidth-loss proxy instead of expanding the public preview API.
+The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell integration / width, and restrained contamination from one bandwidth-loss proxy instead of expanding the public preview API.
 
 Secondary mappings that are still present but not the main focus of this phase:
 
@@ -320,7 +320,7 @@ The current limited multi-pass still-image implementation is intentionally not b
 - tone rolloff and soft highlight compression
 - luma softness and microcontrast loss
 - restrained highlight bleed that reads like scan-direction signal smear, not bloom
-- chroma bandwidth loss, coarse horizontal chroma resolution loss, and restrained bleed
+- chroma bandwidth loss, cell-integrated horizontal chroma resolution loss, and restrained bleed / contamination
 - only mild chroma misregistration
 - only mild transport wobble, noise contamination, and dropout
 
@@ -346,7 +346,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma two-scale low-pass/detail attenuation biased toward microcontrast loss, with restrained bright-edge lag and highlight bleed embedded in the same branch
-- chroma delay plus low-pass/coarse-reconstruction/smear degradation biased toward bandwidth loss over misregistration
+- chroma delay plus low-pass/cell-integrated reconstruction/contamination degradation biased toward bandwidth loss over misregistration
 - reconstruction back to RGB with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, and restrained Y/C leakage
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for noise/dropout placement; it does not reapply transport resampling to luma/chroma textures

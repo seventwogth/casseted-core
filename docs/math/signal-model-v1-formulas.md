@@ -28,7 +28,7 @@ The implemented still-image subset is:
 1. input conditioning / tone shaping: gamma-coded `sRGB` input assumptions, still-frame transport offset, and luma-preserving soft-knee highlight compression
 2. `RGB -> YUV` decomposition
 3. luma low-pass/detail attenuation plus restrained highlight bleed
-4. chroma horizontal delay + bandwidth-limited chroma reconstruction + optional vertical line blend
+4. chroma horizontal delay + band-limited, cell-integrated chroma reconstruction + optional vertical line blend
 5. `YUV -> RGB` reconstruction with a small Y/C leakage term, brightness-shaped luma contamination, softer chroma contamination, and restrained still-image dropout handling
 
 The current implementation keeps those stages in a compact four-pass runtime and names them explicitly in code through:
@@ -120,10 +120,14 @@ Those tolerances are intentionally small enough to catch behavioral regressions 
 | \(\beta_H\) | resolved highlight-bleed amount | `min(0.16, (p_Y / (p_Y + 1.25)) * (0.06 + 0.14 * rho_h / (rho_h + 1)))` |
 | \(r_\tau\) | resolved chroma delay in pixels | `SignalSettings.chroma.offset_px * s_ref` |
 | \(r_C\) | resolved chroma bandwidth-loss proxy in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
-| \(r_L\) | derived chroma low-pass span | `0.35 + 0.85 * r_C` for the bandwidth-loss branch |
-| \(d_C\) | derived chroma reconstruction cell width | `1.0 + 0.65 * r_C` |
-| \(\alpha_S\) | mild trailing-smear mix | `clamp(0.10 + 0.16 * r_C / (r_C + 1.0), 0, 0.26)` |
-| \(\delta_S\) | restrained smear shift coupled to delay sign | `sign(r_tau) * min(0.5 * d_C, abs(r_tau) + 0.25 * r_L)` |
+| \(\eta_C\) | derived chroma bandwidth mix | `r_C / (r_C + 1.0)` |
+| \(r_L\) | derived chroma low-pass span | `0.40 + 0.72 * r_C + 0.28 * eta_C` for the bandwidth-loss branch |
+| \(d_C\) | derived chroma reconstruction cell width | `1.0 + 0.52 * r_C + 0.38 * eta_C` |
+| \(\eta_\tau\) | derived delay/bandwidth balance mix for smear | `abs(r_tau) / (abs(r_tau) + 0.5 * r_C + 0.35)` |
+| \(s_C\) | derived chroma cell-integration step | `max(0.35, 0.24 * d_C)` |
+| \(\alpha_S\) | restrained trailing-smear mix | `clamp(0.08 + 0.14 * eta_C + 0.05 * eta_tau, 0, 0.27)` |
+| \(\gamma_Y\) | local luma-edge guard used to keep chroma subordinate | `clamp(2.8 * max(abs(Y_0 - Y_-), abs(Y_0 - Y_+)), 0, 1)` |
+| \(\beta_N\) | derived chroma vertical-neighbor weight | `0.18 + 0.06 * eta_C` |
 | \(s_D\) | resolved dropout mean span in pixels | `min(48 * s_ref, 13.5 * tau_D * s_ref)` |
 
 ### Current range rules used by stage verification
@@ -453,10 +457,10 @@ Pipeline / shader mapping:
 ### 4.4 Chroma Degradation
 
 Purpose:
-make chroma softer and less precisely registered than luma.
+make chroma softer and less precisely registered than luma while letting bandwidth loss dominate over visible color splitting.
 
 Mathematical meaning:
-apply a lightly delayed chroma sample, prefilter it horizontally, reconstruct it on a coarser horizontal chroma grid, add a restrained smear bias, optionally blend adjacent lines, then saturation scaling.
+apply a lightly delayed chroma sample, prefilter it horizontally, integrate it onto a coarser horizontal chroma grid, reconstruct it with a smooth low-resolution basis, add a restrained trailing contamination term, optionally blend adjacent lines, then saturation scaling.
 
 Resolved radii:
 
@@ -482,65 +486,127 @@ with the same optional vertical line blend and final saturation scaling. This ke
 For the bandwidth-loss branch \(r_C > \varepsilon\), derive:
 
 \[
-r_L = 0.35 + 0.85r_C
+\eta_C = \frac{r_C}{r_C + 1}
 \qquad
-d_C = 1 + 0.65r_C
+\eta_\tau = \frac{|r_\tau|}{|r_\tau| + 0.5r_C + 0.35}
 \]
 
 \[
-\alpha_S = \operatorname{clamp}\left(0.10 + 0.16\frac{r_C}{r_C + 1}, 0, 0.26\right)
+r_L = 0.40 + 0.72r_C + 0.28\eta_C
 \qquad
-\delta_S = \operatorname{sign}(r_\tau)\min\left(0.5d_C, |r_\tau| + 0.25r_L\right)
+d_C = 1 + 0.52r_C + 0.38\eta_C
+\]
+
+\[
+s_C = \max(0.35,\; 0.24d_C)
+\qquad
+\alpha_S = \operatorname{clamp}\left(0.08 + 0.14\eta_C + 0.05\eta_\tau, 0, 0.27\right)
 \]
 
 Horizontal chroma prefilter:
 
 \[
-\Delta_1 = \max(0.65, 0.55r_L + 0.35)
+\Delta_n = \max(0.45, 0.42r_L + 0.30)
 \qquad
-\Delta_2 = \max(\Delta_1 + 0.75, 1.35r_L + 0.75)
+\Delta_m = \max(\Delta_n + 0.55, 0.95r_L + 0.55)
+\qquad
+\Delta_f = \max(\Delta_m + 0.65, 1.55r_L + 0.85)
 \]
 
 \[
 L(x, y; r_L) =
-0.12C(x - \Delta_2, y)
-+ 0.23C(x - \Delta_1, y)
-+ 0.30C(x, y)
-+ 0.23C(x + \Delta_1, y)
-+ 0.12C(x + \Delta_2, y)
+0.07C(x - \Delta_f, y)
++ 0.12C(x - \Delta_m, y)
++ 0.18C(x - \Delta_n, y)
++ 0.26C(x, y)
++ 0.18C(x + \Delta_n, y)
++ 0.12C(x + \Delta_m, y)
++ 0.07C(x + \Delta_f, y)
 \]
 
-Coarse horizontal chroma reconstruction:
+Cell integration before coarse reconstruction:
 
 \[
-x^- = \left(\left\lfloor\frac{x + r_\tau}{d_C} - 0.5\right\rfloor + 0.5\right)d_C
+Q(x, y) =
+0.22L(x - s_C, y; 1.02r_L)
++ 0.56L(x, y; r_L)
++ 0.22L(x + s_C, y; 1.02r_L)
+\]
+
+Let \(x' = x + r_\tau\). The coarse cell center used by the current pixel is:
+
+\[
+x_0 = \left(\left\lfloor\frac{x'}{d_C}\right\rfloor + 0.5\right)d_C
 \qquad
-x^+ = x^- + d_C
+\phi = \operatorname{fract}\left(\frac{x'}{d_C}\right)
+\]
+
+The current shader reconstructs chroma from the integrated coarse cells with a quadratic B-spline-like basis:
+
+\[
+w_- = \frac{1}{2}(1 - \phi)^2
+\qquad
+w_0 = 0.75 - (\phi - 0.5)^2
+\qquad
+w_+ = \frac{1}{2}\phi^2
 \]
 
 \[
-t = \operatorname{smoothstep}\left(0.15, 0.85, \operatorname{clamp}\left(\frac{x + r_\tau - x^-}{d_C}, 0, 1\right)\right)
+C_R(x, y) =
+w_-Q(x_0 - d_C, y)
++ w_0Q(x_0, y)
++ w_+Q(x_0 + d_C, y)
+\]
+
+Restrained trailing contamination:
+
+\[
+\sigma_\tau =
+\begin{cases}
+1, & |r_\tau| \le \varepsilon \\
+\operatorname{sign}(r_\tau), & |r_\tau| > \varepsilon
+\end{cases}
 \]
 
 \[
-C_R(x, y) = (1 - t)L(x^-, y; r_L) + tL(x^+, y; r_L)
+T_C(x, y) =
+0.60Q(x_0, y)
++ 0.28Q(x_0 - \sigma_\tau d_C, y)\Big|_{r_L \mapsto 1.10r_L}
++ 0.12Q(x_0 - 2\sigma_\tau d_C, y)\Big|_{r_L \mapsto 1.25r_L}
 \]
 
-Restrained chroma smear / bleed:
+To keep the chroma branch subordinate to the refined luma branch, the current shader suppresses part of that trailing contamination on strong luma edges:
 
 \[
-\widetilde{L}(x, y) = L(x, y; 1.15r_L)
+\gamma_Y(x, y) = \operatorname{clamp}\left(
+2.8 \max\left(
+|Y(x, y) - Y(x - 1, y)|,\;
+|Y(x, y) - Y(x + 1, y)|
+\right),
+0,
+1
+\right)
 \]
 
 \[
-C_S(x, y) = (1 - \alpha_S)C_R(x, y)
-+ \alpha_S\left[0.78C_R(x, y) + 0.22\widetilde{L}(x - \delta_S, y)\right]
+\alpha_S' = \alpha_S \left(1 - \gamma_Y(0.22 + 0.18\eta_C)\right)
+\]
+
+\[
+C_S(x, y) = (1 - \alpha_S')C_R(x, y)
++ \alpha_S'\left[0.76C_R(x, y) + 0.24T_C(x, y)\right]
 \]
 
 Vertical chroma blend:
 
 \[
-C_V(x, y) = 0.25C_S(x, y - 1) + 0.5C_S(x, y) + 0.25C_S(x, y + 1)
+\beta_N = 0.18 + 0.06\eta_C
+\]
+
+\[
+C_V(x, y) = \beta_N C_S(x, y - 1)
++ (1 - 2\beta_N)C_S(x, y)
++ \beta_N C_S(x, y + 1)
 \]
 
 Final chroma approximation:
@@ -555,13 +621,13 @@ where:
 - \(\beta_V = \texttt{VhsDecodeSettings.chroma\_vertical\_blend}\)
 
 Visual effect:
-color bleeding, softened color edges, visible horizontal chroma resolution loss, and only mild luma/chroma misregistration.
+color bleeding, softened color edges, more convincing horizontal chroma resolution loss, and only mild luma/chroma misregistration.
 
 Signal motivation:
 high for lower chroma bandwidth and registration error.
 
 Engineering approximation:
-current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> coarse reconstruction -> restrained smear` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching.
+current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> cell integration -> coarse B-spline-like reconstruction -> restrained trailing contamination` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching, and it now suppresses part of the trailing contamination on strong luma edges so the chroma branch stays visually subordinate to the refined luma branch.
 
 Pipeline / shader mapping:
 
@@ -895,7 +961,7 @@ Implemented now:
 - tone shaping with soft highlight compression
 - BT.601-like working `YUV` decomposition
 - luma two-scale low-pass/detail attenuation with restrained highlight bleed
-- delayed and blurred chroma path with saturation control
+- delayed, band-limited, cell-integrated chroma path with restrained trailing contamination and saturation control
 - reconstruction back to RGB
 - line jitter, brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout handling
 
