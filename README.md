@@ -149,4 +149,4 @@ Current testing is intentionally lightweight:
 - committed stage-oriented PNG fixtures for the current limited multi-pass still path in `assets/reference-images/still-pipeline-v1/`
 - stage regression coverage for resolved defaults, bounded perturbations, and reference PNG comparisons when a GPU adapter is available
 - shared helpers in [`docs/testing.md`](./docs/testing.md)
-
+2026
