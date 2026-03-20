@@ -159,7 +159,12 @@ mod tests {
         assert!(
             STILL_RECONSTRUCTION_OUTPUT_SHADER
                 .source
-                .contains("reconstruct_output")
+                .contains("sample_reconstruction_contamination")
+        );
+        assert!(
+            STILL_RECONSTRUCTION_OUTPUT_SHADER
+                .source
+                .contains("compose_display_yuv")
         );
     }
 }

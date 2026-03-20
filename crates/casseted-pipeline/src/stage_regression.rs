@@ -224,19 +224,19 @@ impl StageReferenceCase {
                     "chroma_degradation.vertical_blend",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_noise_amount,
+                    stages.reconstruction_output.luma_contamination_amount,
                     0.0,
-                    "reconstruction_output.luma_noise_amount",
+                    "reconstruction_output.luma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.chroma_noise_amount,
+                    stages.reconstruction_output.chroma_contamination_amount,
                     0.0,
-                    "reconstruction_output.chroma_noise_amount",
+                    "reconstruction_output.chroma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_chroma_crosstalk,
+                    stages.reconstruction_output.y_c_leakage,
                     0.0,
-                    "reconstruction_output.luma_chroma_crosstalk",
+                    "reconstruction_output.y_c_leakage",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.dropout_line_probability,
@@ -301,19 +301,19 @@ impl StageReferenceCase {
                     "chroma_degradation.saturation",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_noise_amount,
+                    stages.reconstruction_output.luma_contamination_amount,
                     0.0,
-                    "reconstruction_output.luma_noise_amount",
+                    "reconstruction_output.luma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.chroma_noise_amount,
+                    stages.reconstruction_output.chroma_contamination_amount,
                     0.0,
-                    "reconstruction_output.chroma_noise_amount",
+                    "reconstruction_output.chroma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_chroma_crosstalk,
+                    stages.reconstruction_output.y_c_leakage,
                     0.0,
-                    "reconstruction_output.luma_chroma_crosstalk",
+                    "reconstruction_output.y_c_leakage",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.dropout_line_probability,
@@ -358,9 +358,9 @@ impl StageReferenceCase {
                     "chroma_degradation.saturation",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_chroma_crosstalk,
+                    stages.reconstruction_output.y_c_leakage,
                     0.0,
-                    "reconstruction_output.luma_chroma_crosstalk",
+                    "reconstruction_output.y_c_leakage",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.dropout_line_probability,
@@ -395,9 +395,9 @@ impl StageReferenceCase {
                     "chroma_degradation.vertical_blend",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_chroma_crosstalk,
+                    stages.reconstruction_output.y_c_leakage,
                     0.0,
-                    "reconstruction_output.luma_chroma_crosstalk",
+                    "reconstruction_output.y_c_leakage",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.dropout_line_probability,
@@ -417,19 +417,19 @@ impl StageReferenceCase {
                     "chroma_degradation.saturation",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_noise_amount,
+                    stages.reconstruction_output.luma_contamination_amount,
                     0.018,
-                    "reconstruction_output.luma_noise_amount",
+                    "reconstruction_output.luma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.chroma_noise_amount,
+                    stages.reconstruction_output.chroma_contamination_amount,
                     0.0077,
-                    "reconstruction_output.chroma_noise_amount",
+                    "reconstruction_output.chroma_contamination_amount",
                 );
                 assert_approx_eq(
-                    stages.reconstruction_output.luma_chroma_crosstalk,
+                    stages.reconstruction_output.y_c_leakage,
                     0.04,
-                    "reconstruction_output.luma_chroma_crosstalk",
+                    "reconstruction_output.y_c_leakage",
                 );
                 assert_approx_eq(
                     stages.reconstruction_output.dropout_line_probability,

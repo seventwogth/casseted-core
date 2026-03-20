@@ -54,7 +54,7 @@ fn default_pipeline_projects_vhs_model_into_current_signal_settings() {
 }
 
 #[test]
-fn manual_pipeline_keeps_model_dependent_decode_terms_neutral() {
+fn manual_pipeline_keeps_model_dependent_final_reconstruction_terms_neutral() {
     let input = gradient_rgba8_image(FrameSize::new(720, 480));
     let pipeline = StillImagePipeline::new(SignalSettings::default());
     let stages = resolve_still_stages(&input, &pipeline);
@@ -62,7 +62,9 @@ fn manual_pipeline_keeps_model_dependent_decode_terms_neutral() {
     assert_eq!(stages.luma_degradation.detail_mix, 0.0);
     assert_eq!(stages.luma_degradation.highlight_bleed_amount, 0.0);
     assert_eq!(stages.chroma_degradation.vertical_blend, 0.0);
-    assert_eq!(stages.reconstruction_output.luma_chroma_crosstalk, 0.0);
+    assert_eq!(stages.reconstruction_output.luma_contamination_amount, 0.0);
+    assert_eq!(stages.reconstruction_output.chroma_contamination_amount, 0.0);
+    assert_eq!(stages.reconstruction_output.y_c_leakage, 0.0);
     assert_eq!(stages.reconstruction_output.dropout_line_probability, 0.0);
     assert_eq!(stages.reconstruction_output.dropout_span_px, 0.0);
 }
@@ -166,7 +168,14 @@ fn model_path_applies_guardrails_when_preview_overrides_diverge_from_projection(
     assert!(effective.tracking.line_jitter_px < 0.55);
     assert!((stages.chroma_degradation.offset_px - effective.chroma.offset_px).abs() < 1e-6);
     assert!(
-        (stages.reconstruction_output.luma_noise_amount - effective.noise.luma_amount).abs() < 1e-6
+        (stages.reconstruction_output.luma_contamination_amount - effective.noise.luma_amount)
+            .abs()
+            < 1e-6
+    );
+    assert!(
+        (stages.reconstruction_output.chroma_contamination_amount - effective.noise.chroma_amount)
+            .abs()
+            < 1e-6
     );
 }
 
