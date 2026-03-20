@@ -106,9 +106,9 @@ impl TrackingOverrides {
 
 pub(crate) fn project_vhs_model_to_preview_signal(model: VhsModel) -> SignalSettings {
     // Only the currently active still-image runtime subset is projected here.
-    // Formal input selectors, head switching, and output transfer remain
-    // documented-only. The chroma-phase terms stay off the preview surface and
-    // now resolve directly as model-only stage auxiliaries during packing.
+    // Formal input selectors and output transfer remain documented-only.
+    // Chroma-phase and head-switching terms stay off the preview surface and
+    // resolve directly as model-only stage auxiliaries during packing.
     SignalSettings {
         tone: ToneSettings {
             highlight_soft_knee: model.tone.highlight_soft_knee,

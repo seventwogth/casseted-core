@@ -77,6 +77,8 @@ fn manual_pipeline_keeps_model_dependent_final_reconstruction_terms_neutral() {
     assert_eq!(stages.reconstruction_output.dropout_line_probability, 0.0);
     assert_eq!(stages.reconstruction_output.dropout_span_px, 0.0);
     assert_eq!(stages.reconstruction_output.chroma_phase_noise_rad, 0.0);
+    assert_eq!(stages.reconstruction_output.head_switching_band_lines, 0.0);
+    assert_eq!(stages.reconstruction_output.head_switching_offset_px, 0.0);
 }
 
 #[test]
@@ -93,6 +95,8 @@ fn model_path_resolves_secondary_artifact_terms() {
     assert!(
         (stages.reconstruction_output.chroma_phase_noise_rad - 1.5_f32.to_radians()).abs() < 1e-6
     );
+    assert_eq!(stages.reconstruction_output.head_switching_band_lines, 6.0);
+    assert!((stages.reconstruction_output.head_switching_offset_px - 20.25).abs() < 1e-6);
 }
 
 #[test]
@@ -101,6 +105,7 @@ fn effect_uniforms_are_grouped_by_logical_stage() {
     let pipeline = StillImagePipeline::default();
     let uniforms = effect_uniforms(&input, &pipeline);
 
+    assert_eq!(uniforms.frame[2], 6.0);
     assert_eq!(uniforms.frame[3], 0.0);
     assert!((uniforms.input_conditioning[0] - 0.64).abs() < 1e-6);
     assert!((uniforms.luma_degradation[1] - 0.045).abs() < 1e-6);
@@ -108,6 +113,7 @@ fn effect_uniforms_are_grouped_by_logical_stage() {
     assert!((uniforms.luma_degradation[3] - 0.06642922).abs() < 1e-6);
     assert!((uniforms.chroma_degradation[3] - 0.35).abs() < 1e-6);
     assert!((uniforms.reconstruction_output[2] - 0.02).abs() < 1e-6);
+    assert!((uniforms.reconstruction_output[3] - 20.25).abs() < 1e-6);
     assert!((uniforms.reconstruction_aux[0] - 0.002).abs() < 1e-6);
     assert!((uniforms.reconstruction_aux[1] - 20.25).abs() < 1e-6);
     assert_eq!(uniforms.reconstruction_aux[2], 0.0);
@@ -293,6 +299,38 @@ fn chroma_phase_terms_bypass_preview_projection_but_change_runtime_stage_state()
 }
 
 #[test]
+fn head_switching_terms_bypass_preview_projection_but_change_runtime_stage_state() {
+    let input = gradient_rgba8_image(FrameSize::new(720, 480));
+    let mut base_model = VhsModel::default();
+    base_model.transport.head_switching_band_lines = 0;
+    base_model.transport.head_switching_offset_us = 0.0;
+    let mut switching_model = base_model;
+    switching_model.transport.head_switching_band_lines = 12;
+    switching_model.transport.head_switching_offset_us = 2.0;
+
+    let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
+    let switching_pipeline = StillImagePipeline::from_vhs_model(switching_model);
+    let base_stages = resolve_still_stages(&input, &base_pipeline);
+    let switching_stages = resolve_still_stages(&input, &switching_pipeline);
+
+    assert_eq!(
+        base_pipeline.preview_base_signal(),
+        switching_pipeline.preview_base_signal()
+    );
+    assert_eq!(base_stages.reconstruction_output.head_switching_band_lines, 0.0);
+    assert_eq!(base_stages.reconstruction_output.head_switching_offset_px, 0.0);
+    assert_eq!(
+        switching_stages.reconstruction_output.head_switching_band_lines,
+        12.0
+    );
+    assert!((switching_stages.reconstruction_output.head_switching_offset_px - 27.0).abs() < 1e-6);
+    assert_ne!(
+        effect_uniforms(&input, &base_pipeline),
+        effect_uniforms(&input, &switching_pipeline)
+    );
+}
+
+#[test]
 fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset() {
     let input = gradient_rgba8_image(FrameSize::new(720, 480));
     let base_model = VhsModel::default();
@@ -301,8 +339,6 @@ fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset(
     deferred_only.input.matrix = VideoMatrix::Bt601;
     deferred_only.input.transfer = InputTransfer::Bt601;
     deferred_only.input.temporal_sampling = TemporalSampling::InterlacedFields;
-    deferred_only.transport.head_switching_band_lines = 14;
-    deferred_only.transport.head_switching_offset_us = 4.5;
     deferred_only.decode.output_transfer = OutputTransfer::Bt1886Like;
 
     let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
@@ -358,6 +394,32 @@ fn chroma_phase_terms_modify_gpu_output_when_gpu_is_available() {
         .expect("phase-aware pipeline should process the image");
 
     assert_images_not_identical(&base_output, &phase_output);
+}
+
+#[test]
+fn head_switching_terms_modify_gpu_output_when_gpu_is_available() {
+    let gpu = match pollster::block_on(GpuContext::request(&GpuContextDescriptor::default())) {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+
+    let input = reference_card_rgba8_image(FrameSize::new(64, 48));
+    let mut base_model = VhsModel::default();
+    base_model.transport.head_switching_band_lines = 0;
+    base_model.transport.head_switching_offset_us = 0.0;
+    let mut switching_model = base_model;
+    switching_model.transport.head_switching_band_lines = 10;
+    switching_model.transport.head_switching_offset_us = 2.0;
+
+    let base_output = StillImagePipeline::from_vhs_model(base_model)
+        .process_with_gpu(&gpu, &input)
+        .expect("base pipeline should process the image");
+    let switching_output = StillImagePipeline::from_vhs_model(switching_model)
+        .process_with_gpu(&gpu, &input)
+        .expect("head-switching-aware pipeline should process the image");
+
+    assert_images_not_identical(&base_output, &switching_output);
 }
 
 #[test]

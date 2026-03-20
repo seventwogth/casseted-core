@@ -75,8 +75,14 @@ Use this as the field-level companion to:
 - `VhsTransportSettings.vertical_wander_lines`
   Runtime path: `SignalSettings.tracking.vertical_offset_lines` -> `effect.input_conditioning.w`.
   Why partial: it is interpreted as a still-frame vertical offset snapshot, not a fuller slow transport process.
+- `VhsTransportSettings.head_switching_band_lines`
+  Runtime path: model-only resolved line count -> `effect.frame.z` -> `apply_head_switching_approximation()` in `still_reconstruction_output.wgsl`.
+  Why partial: it only localizes a restrained lower-frame switching band for a seam/disturbance approximation; it is not a field-timing or deck-geometry simulation.
+- `VhsTransportSettings.head_switching_offset_us`
+  Runtime path: `head_switching_offset_px_from_time()` -> `effect.reconstruction_output.w` -> `apply_head_switching_approximation()` in `still_reconstruction_output.wgsl`.
+  Why partial: it becomes a bounded horizontal switching displacement plus mild chroma-support loss inside the lower switching band, not a full timing relock, tearing bar, or decoder-accurate head-switching model.
 - `TransportInstability` overall
-  Runtime status: only the spatial still-image subset is active, and it remains fused into `still_input_conditioning.wgsl`.
+  Runtime status: only the spatial still-image subset is active. The global still-frame jitter/vertical offset terms remain fused into `still_input_conditioning.wgsl`, while the lower-band head-switching approximation is inserted later in `still_reconstruction_output.wgsl` as a compact model-only transport-side auxiliary.
 
 ### Noise / dropout parameters
 
@@ -101,8 +107,8 @@ Use this as the field-level companion to:
 
 - `StillImagePipeline::from_vhs_model()` activates the model-backed subset above.
 - `StillImagePipeline::new(SignalSettings)` keeps model-only auxiliaries neutral:
-  luma `detail_mix`, chroma `vertical_blend`, chroma-phase auxiliaries, Y/C leakage, and dropout terms stay at zero unless a formal model is present.
-- `preview_base_signal()` still ignores the formal chroma-phase terms on purpose:
+  luma `detail_mix`, chroma `vertical_blend`, chroma-phase auxiliaries, head-switching auxiliaries, Y/C leakage, and dropout terms stay at zero unless a formal model is present.
+- `preview_base_signal()` still ignores the formal chroma-phase and head-switching terms on purpose:
   they bypass the compact preview control surface and resolve only during stage packing.
 - preview guardrails remain active only on the compact preview surface; they do not redefine the formal model.
 
@@ -117,8 +123,6 @@ Use this as the field-level companion to:
 
 ### Chroma / transport / decode fields
 
-- `VhsTransportSettings.head_switching_band_lines`
-- `VhsTransportSettings.head_switching_offset_us`
 - `VhsDecodeSettings.output_transfer`
   Current state: present in the formal model and docs, but not read by the current still runtime subset.
 
@@ -130,7 +134,5 @@ Use this as the field-level companion to:
 
 ## Most Justified Next Activations
 
-1. `head_switching_*`
-   Why next: they are the strongest remaining spatial transport terms already present in the formal model, and they can be introduced as a restrained still-image bottom-band subset without forcing video/temporal architecture.
-2. `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer`
-   Why next: they are the clearest remaining decode-side selectors once the current chroma-phase gap is closed, but they should still be activated only if the still-image assumptions stay explicit and compact.
+1. `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer`
+   Why next: they are now the clearest remaining decode-side selectors once the chroma-phase and restrained head-switching gaps are closed, but they should still be activated only if the still-image assumptions stay explicit and compact.
