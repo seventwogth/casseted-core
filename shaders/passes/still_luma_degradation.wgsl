@@ -30,49 +30,92 @@ fn highlight_mask(value: f32, threshold: f32) -> f32 {
     return clamp((value - threshold) / headroom, 0.0, 1.0);
 }
 
-fn highlight_bleed(uv: vec2<f32>, base_luma: f32) -> f32 {
+fn bandwidth_mix(blur_px: f32) -> f32 {
+    return blur_px / (blur_px + 1.35);
+}
+
+fn detail_recovery_mix() -> f32 {
+    return clamp(effect.luma_degradation.y / 0.12, 0.0, 1.0);
+}
+
+fn highlight_bleed(
+    prev_near: f32,
+    prev_mid: f32,
+    prev_far: f32,
+    center_luma: f32,
+    base_luma: f32,
+) -> f32 {
     let threshold = effect.luma_degradation.z;
     let amount = effect.luma_degradation.w;
     if (amount <= 1e-4 || threshold >= 0.999) {
         return 0.0;
     }
 
-    let inv_size = frame_inv_size();
-    let smear_step_px = max(0.85, effect.luma_degradation.x * 0.9 + 0.65);
-    let smear_step = vec2<f32>(smear_step_px * inv_size.x, 0.0);
-    let prev_near = sample_working_signal(uv - smear_step).x;
-    let prev_mid = sample_working_signal(uv - smear_step * 2.0).x;
-    let prev_far = sample_working_signal(uv - smear_step * 3.5).x;
-    let center = sample_working_signal(uv).x;
-    let bleed_energy = highlight_mask(prev_near, threshold) * 0.52
+    let highlight_energy = highlight_mask(prev_near, threshold) * 0.56
         + highlight_mask(prev_mid, threshold) * 0.28
-        + highlight_mask(prev_far, threshold) * 0.12
-        + highlight_mask(center, threshold) * 0.08;
-    return bleed_energy * amount * (1.0 - base_luma);
+        + highlight_mask(prev_far, threshold) * 0.10
+        + highlight_mask(center_luma, threshold) * 0.06;
+    let contour_energy = max(prev_near - base_luma, 0.0) * 0.60
+        + max(prev_mid - base_luma, 0.0) * 0.28
+        + max(prev_far - base_luma, 0.0) * 0.12;
+    return highlight_energy * contour_energy * amount * (1.0 - base_luma * 0.82);
 }
 
 fn degrade_luma(uv: vec2<f32>) -> f32 {
+    let blur_px = max(effect.luma_degradation.x, 0.0);
+    let center = sample_working_signal(uv).x;
+    if (blur_px <= 1e-4) {
+        return center;
+    }
+
     let inv_size = frame_inv_size();
-    let center = sample_working_signal(uv);
-    let luma_offset = effect.luma_degradation.x * inv_size.x;
-    let inner_step = vec2<f32>(luma_offset, 0.0);
-    let outer_step = vec2<f32>(luma_offset * 2.0, 0.0);
-    let left_outer = sample_working_signal(uv - outer_step);
-    let left_inner = sample_working_signal(uv - inner_step);
-    let right_inner = sample_working_signal(uv + inner_step);
-    let right_outer = sample_working_signal(uv + outer_step);
-    let blurred_luma = left_outer.x * 0.15
-        + left_inner.x * 0.22
-        + center.x * 0.26
-        + right_inner.x * 0.22
-        + right_outer.x * 0.15;
-    let edge_band = left_inner.x * 0.25 + center.x * 0.5 + right_inner.x * 0.25;
+    let sample_step_px = max(0.5, blur_px * 0.55 + 0.45);
+    let sample_step = vec2<f32>(sample_step_px * inv_size.x, 0.0);
+    let left_far = sample_working_signal(uv - sample_step * 3.0).x;
+    let left_outer = sample_working_signal(uv - sample_step * 2.0).x;
+    let left_inner = sample_working_signal(uv - sample_step).x;
+    let right_inner = sample_working_signal(uv + sample_step).x;
+    let right_outer = sample_working_signal(uv + sample_step * 2.0).x;
+    let right_far = sample_working_signal(uv + sample_step * 3.0).x;
+    let low_luma = left_far * 0.06
+        + left_outer * 0.12
+        + left_inner * 0.18
+        + center * 0.28
+        + right_inner * 0.18
+        + right_outer * 0.12
+        + right_far * 0.06;
+    let mid_luma = left_outer * 0.10
+        + left_inner * 0.22
+        + center * 0.36
+        + right_inner * 0.22
+        + right_outer * 0.10;
+    let threshold = effect.luma_degradation.z;
+    let bright_gate = highlight_mask(max(left_inner, center), threshold);
+    let lag_mix = bright_gate * bandwidth_mix(blur_px) * 0.18;
+    let lagged_low_luma = left_far * 0.09
+        + left_outer * 0.16
+        + left_inner * 0.22
+        + center * 0.26
+        + right_inner * 0.16
+        + right_outer * 0.08
+        + right_far * 0.03;
+    let band_limited_luma = mix(low_luma, lagged_low_luma, lag_mix);
+    let detail_mix = detail_recovery_mix();
+    let micro_gain = clamp(1.0 - bandwidth_mix(blur_px) * (0.88 - detail_mix * 0.34), 0.10, 1.0)
+        * (1.0 - bright_gate * (0.10 + bandwidth_mix(blur_px) * 0.08));
+    let edge_gain = clamp(1.0 - bandwidth_mix(blur_px) * (0.46 - detail_mix * 0.20), 0.30, 1.0);
+    let edge_band = mid_luma - band_limited_luma;
+    let micro_band = center - mid_luma;
     let base_luma = clamp(
-        blurred_luma + (center.x - edge_band) * effect.luma_degradation.y,
+        band_limited_luma + edge_band * edge_gain + micro_band * micro_gain,
         0.0,
         1.0,
     );
-    return clamp(base_luma + highlight_bleed(uv, base_luma), 0.0, 1.0);
+    return clamp(
+        base_luma + highlight_bleed(left_inner, left_outer, left_far, center, base_luma),
+        0.0,
+        1.0,
+    );
 }
 
 @vertex

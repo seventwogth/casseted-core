@@ -121,7 +121,7 @@ impl<'a> StillPipelineRuntime<'a> {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let conditioning_bind_group = create_single_texture_bind_group(
-            &self.device,
+            self.device,
             &self.single_texture_layout,
             &input_view,
             &self.sampler,
@@ -129,7 +129,7 @@ impl<'a> StillPipelineRuntime<'a> {
             "casseted-still-image-conditioning-bind-group",
         );
         let luma_bind_group = create_single_texture_bind_group(
-            &self.device,
+            self.device,
             &self.single_texture_layout,
             &working_view,
             &self.sampler,
@@ -137,7 +137,7 @@ impl<'a> StillPipelineRuntime<'a> {
             "casseted-still-image-luma-bind-group",
         );
         let chroma_bind_group = create_single_texture_bind_group(
-            &self.device,
+            self.device,
             &self.single_texture_layout,
             &working_view,
             &self.sampler,
@@ -145,7 +145,7 @@ impl<'a> StillPipelineRuntime<'a> {
             "casseted-still-image-chroma-bind-group",
         );
         let reconstruction_bind_group = create_dual_texture_bind_group(
-            &self.device,
+            self.device,
             &self.dual_texture_layout,
             &luma_view,
             &chroma_view,
@@ -235,37 +235,37 @@ impl<'a> StillPipelineRuntime<'a> {
         uniform_bytes: &[u8],
     ) -> StillRunResources {
         let texture_size = input.descriptor.size;
-        let input_texture = create_input_texture(&self.device, &self.queue, input);
+        let input_texture = create_input_texture(self.device, self.queue, input);
         let working_texture = create_pipeline_texture(
-            &self.device,
+            self.device,
             texture_size,
             INTERMEDIATE_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             "casseted-still-image-working-signal",
         );
         let luma_texture = create_pipeline_texture(
-            &self.device,
+            self.device,
             texture_size,
             INTERMEDIATE_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             "casseted-still-image-luma-signal",
         );
         let chroma_texture = create_pipeline_texture(
-            &self.device,
+            self.device,
             texture_size,
             INTERMEDIATE_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             "casseted-still-image-chroma-signal",
         );
         let output_texture = create_pipeline_texture(
-            &self.device,
+            self.device,
             texture_size,
             OUTPUT_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             "casseted-still-image-output",
         );
 
-        let uniform_buffer = create_uniform_buffer(&self.device, uniform_bytes);
+        let uniform_buffer = create_uniform_buffer(self.device, uniform_bytes);
         self.queue.write_buffer(&uniform_buffer, 0, uniform_bytes);
 
         let padded_bytes_per_row = padded_bytes_per_row(texture_size.width);
