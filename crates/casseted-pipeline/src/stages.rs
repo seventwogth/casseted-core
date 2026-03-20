@@ -112,7 +112,9 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 stages.reconstruction_output.dropout_span_px,
                 // Keep the shared block compact: the model-only chroma-phase
                 // terms reuse the auxiliary spill lanes instead of widening the
-                // preview-facing stage surface.
+                // preview-facing stage surface. `z` is packed here for the
+                // chroma pass, while `w` is consumed later by the final
+                // reconstruction/output pass.
                 stages.chroma_degradation.phase_error_rad,
                 stages.reconstruction_output.chroma_phase_noise_rad,
             ],

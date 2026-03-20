@@ -470,7 +470,7 @@ Purpose:
 make chroma softer and less precisely registered than luma while letting bandwidth loss dominate over visible color splitting.
 
 Mathematical meaning:
-apply a lightly delayed chroma sample, prefilter it horizontally, integrate it onto a coarser horizontal chroma grid, reconstruct it with a smooth low-resolution basis, add a restrained trailing contamination term, optionally blend adjacent lines, then saturation scaling.
+apply a lightly delayed chroma sample, prefilter it horizontally, integrate it onto a coarser horizontal chroma grid, reconstruct it with a smooth low-resolution basis, add a restrained trailing contamination term, optionally blend adjacent lines, apply a deterministic chroma phase bias, then saturation scaling.
 
 Resolved radii:
 
@@ -645,6 +645,9 @@ where:
 - \(\beta_V = \texttt{VhsDecodeSettings.chroma\_vertical\_blend}\)
 - \(\phi_E = \operatorname{radians}(\texttt{VhsChromaSettings.phase\_error\_deg})\)
 
+Placement note:
+the compact uniform block packs \(\phi_E\) into `effect.reconstruction_aux.z`, but the term belongs to the chroma stage and is consumed in `still_chroma_degradation.wgsl` before final reconstruction.
+
 Visual effect:
 color bleeding, softened color edges, more convincing horizontal chroma resolution loss, and only mild luma/chroma misregistration.
 
@@ -652,7 +655,7 @@ Signal motivation:
 high for lower chroma bandwidth and registration error.
 
 Engineering approximation:
-current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> cell integration -> coarse B-spline-like reconstruction -> restrained trailing contamination -> vertical blend -> direct chroma-vector phase rotation` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching, and it now suppresses part of the trailing contamination on strong luma edges so the chroma branch stays visually subordinate to the refined luma branch.
+current still-image v1 still avoids a full encoded chroma carrier model, but it now uses a compact `prefilter -> cell integration -> coarse B-spline-like reconstruction -> restrained trailing contamination -> vertical blend -> direct chroma-vector phase rotation` approximation instead of one symmetric delayed blur. The still-path calibration deliberately keeps bandwidth loss and coarse chroma resolution stronger than the registration error so the result reads as analog chroma loss rather than RGB-split glitching, and it now suppresses part of the trailing contamination on strong luma edges so the chroma branch stays visually subordinate to the refined luma branch. This is a still-image UV-domain approximation of chroma phase placement, not a carrier-referenced encode/decode phase model.
 
 Pipeline / shader mapping:
 
@@ -667,11 +670,11 @@ Purpose:
 recombine degraded luma and chroma into a display RGB image through one explicit still-image final-stage sequence:
 
 1. condition the branch outputs with the restrained dropout approximation
-2. apply reconstruction/output contamination in `Y/C` space
+2. apply reconstruction/output contamination in `Y/C` space, including the stochastic low-band chroma phase perturbation
 3. apply the residual Y/C leakage term and decode to RGB
 
 Mathematical meaning:
-take the dropout-conditioned signal from section `5.3`, apply the luma/chroma-specific contamination terms from section `5.2`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix.
+take the dropout-conditioned signal from section `5.3`, apply the luma/chroma-specific contamination terms from section `5.2`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix. The deterministic chroma phase bias from section `4.4` is already baked into the incoming chroma signal; this final stage only adds the stochastic local perturbation term \(\Delta C_\phi\).
 
 Current approximation:
 
@@ -702,7 +705,7 @@ Signal motivation:
 medium. Reconstruction is required, but the exact consumer-decoder behavior is simplified.
 
 Engineering approximation:
-the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper.
+the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper. The chroma phase term used here is still a restrained low-band UV-domain perturbation of the current chroma vector, not a full analog carrier/decode phase simulation.
 
 Pipeline / shader mapping:
 
@@ -977,10 +980,10 @@ Pipeline / shader mapping:
 | \(\tau_C\) | `VhsChromaSettings.delay_us` | projected to `SignalSettings.chroma.offset_px` |
 | \(b_C\) | `VhsChromaSettings.bandwidth_khz` | projected to `SignalSettings.chroma.bleed_px` |
 | \(g_C\) | `VhsChromaSettings.saturation_gain` | `SignalSettings.chroma.saturation` |
-| \(\phi_E\) | `VhsChromaSettings.phase_error_deg` | projected directly into the reconstruction auxiliary uniform block |
+| \(\phi_E\) | `VhsChromaSettings.phase_error_deg` | resolved as a model-only auxiliary, packed into `effect.reconstruction_aux.z`, and consumed by the chroma stage |
 | \(\beta_V\) | `VhsDecodeSettings.chroma_vertical_blend` | projected directly into the uniform block |
 | \(\epsilon_{YC}\) | `VhsDecodeSettings.luma_chroma_crosstalk` | projected directly into the uniform block |
-| \(\sigma_\phi\) | `VhsNoiseSettings.chroma_phase_noise_deg` | projected directly into the reconstruction auxiliary uniform block |
+| \(\sigma_\phi\) | `VhsNoiseSettings.chroma_phase_noise_deg` | resolved as a model-only auxiliary, packed into `effect.reconstruction_aux.w`, and consumed by the reconstruction contamination step |
 | \(q_D\) | `VhsNoiseSettings.dropout_probability_per_line` | projected directly into the reconstruction auxiliary uniform block |
 | \(\tau_D\) | `VhsNoiseSettings.dropout_mean_span_us` | projected to a pixel-space span in the reconstruction auxiliary uniform block |
 
@@ -992,9 +995,9 @@ Pipeline / shader mapping:
 | `ToneShaping` | `SignalSettings.tone` + `effect.input_conditioning.xy` | `soft_highlight_knee()`, `apply_tone_shaping()` |
 | `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` bandwidth-loss proxy + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
-| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend + direct chroma phase bias | `degrade_chroma()` |
+| `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend + deterministic chroma phase bias packed in `effect.reconstruction_aux.z` | `degrade_chroma()` |
 | `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` |
-| `NoiseAndDropouts` | brightness-shaped luma contamination, softer band-correlated chroma contamination from `SignalSettings.noise.*`, model-driven chroma phase noise, and model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
+| `NoiseAndDropouts` | brightness-shaped luma contamination, softer band-correlated chroma contamination from `SignalSettings.noise.*`, stochastic low-band chroma phase noise packed in `effect.reconstruction_aux.w`, and model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
 | `DecodeOutput` | projected crosstalk + inverse matrix | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
@@ -1018,6 +1021,7 @@ Partially active / approximated:
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma,chroma_phase_noise_deg}` through brightness-shaped luma contamination, softer additive chroma contamination, and restrained low-band chroma phase perturbation
 - `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` through restrained local still-image dropout concealment
 - derived highlight bleed from the current tone + luma state
+- both chroma phase terms remain intentionally in `Partially Active / Approximated`, not `Fully Active`, because the runtime uses still-image UV-domain phase approximations rather than a full analog carrier/decode phase model
 
 Documented here but not implemented yet:
 
@@ -1092,7 +1096,7 @@ These projection rules currently live across `crates/casseted-pipeline/src/proje
 - `detail_mix_from_preemphasis()`
 
 Important runtime note:
-`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\phi_E\), \(\beta_V\), \(\epsilon_{YC}\), \(\sigma_\phi\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs.
+`StillImagePipeline::from_vhs_model()` uses the full projection above and stores it as the private preview base. `StillImagePipeline::new(signal)` is the narrower manual preview path; in that mode the model-only terms \(\alpha_p\), \(\phi_E\), \(\beta_V\), \(\epsilon_{YC}\), \(\sigma_\phi\), \(q_D\), and \(s_D\) are held at zero unless a formal model is also present. Model-backed preview edits now travel through explicit `SignalOverrides` instead of being inferred from equality between two mutable `SignalSettings` blobs. In other words, the chroma phase terms are active in the model-backed still runtime subset, but they intentionally bypass the preview control surface and resolve only during stage packing.
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.
