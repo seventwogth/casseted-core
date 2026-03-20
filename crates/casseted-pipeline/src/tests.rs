@@ -5,7 +5,10 @@ use crate::{
 };
 use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_shaderlib::ShaderId;
-use casseted_signal::{ChromaSettings, NoiseSettings, SignalSettings, TrackingSettings, VhsModel};
+use casseted_signal::{
+    ChromaSettings, InputTransfer, NoiseSettings, OutputTransfer, SignalSettings,
+    TemporalSampling, TrackingSettings, VhsModel, VideoMatrix, VideoStandard,
+};
 use casseted_testing::{assert_images_not_identical, gradient_rgba8_image};
 use casseted_types::FrameSize;
 
@@ -240,6 +243,34 @@ fn model_projection_preserves_signed_chroma_delay() {
     let pipeline = StillImagePipeline::from_vhs_model(model);
 
     assert!(pipeline.preview_base_signal().chroma.offset_px < 0.0);
+}
+
+#[test]
+fn documented_only_formal_fields_do_not_change_current_runtime_subset() {
+    let input = gradient_rgba8_image(FrameSize::new(720, 480));
+    let base_model = VhsModel::default();
+    let mut deferred_only = base_model;
+    deferred_only.standard = VideoStandard::Pal;
+    deferred_only.input.matrix = VideoMatrix::Bt601;
+    deferred_only.input.transfer = InputTransfer::Bt601;
+    deferred_only.input.temporal_sampling = TemporalSampling::InterlacedFields;
+    deferred_only.chroma.phase_error_deg = 18.0;
+    deferred_only.transport.head_switching_band_lines = 14;
+    deferred_only.transport.head_switching_offset_us = 4.5;
+    deferred_only.noise.chroma_phase_noise_deg = 9.0;
+    deferred_only.decode.output_transfer = OutputTransfer::Bt1886Like;
+
+    let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
+    let deferred_pipeline = StillImagePipeline::from_vhs_model(deferred_only);
+
+    assert_eq!(
+        base_pipeline.preview_base_signal(),
+        deferred_pipeline.preview_base_signal()
+    );
+    assert_eq!(
+        effect_uniforms(&input, &base_pipeline),
+        effect_uniforms(&input, &deferred_pipeline)
+    );
 }
 
 #[test]

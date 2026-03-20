@@ -238,6 +238,16 @@ The compact still-preview layer in `SignalSettings` remains intentionally smalle
 
 That preview layer is not a competing domain model. It is a narrow control surface for the current still-image implementation.
 
+## Runtime Subset Status
+
+The field-level map between formal signal-model v1 and the current still-image runtime now lives in [`signal-model-v1-subset.md`](./signal-model-v1-subset.md).
+
+Important distinction:
+
+- a formal stage can be active while some fields in its owning group are still deferred
+- `InputDecode` is the clearest example: the still path already assumes gamma-coded `sRGB`, a BT.601-like matrix, and progressive still-frame semantics, but `VhsInputSettings` are not yet runtime selectors
+- transport, noise, and dropout are active only through the current still-frame spatial subset and the compact reconstruction approximation
+
 ## Mapping To The Current Pipeline
 
 The current still-image pipeline now has an explicit narrow projection from `VhsModel` into the limited multi-pass still implementation:
@@ -306,6 +316,15 @@ Secondary mappings that are still present but not the main focus of this phase:
 - `FrameDescriptor.frame_index` -> shared frame/procedural seed -> `effect.frame.w`, reused by input conditioning and reconstruction-side noise/dropout indexing without making reconstruction the owner of transport semantics
 - `VhsNoiseSettings.{luma_sigma,chroma_sigma}` -> restrained reconstruction contamination amplitudes that the final pass reshapes into brightness-dependent luma noise and softer band-correlated chroma contamination -> `effect.reconstruction_output.xy`
 
+Formal fields intentionally not projected into the current still runtime subset:
+
+- `VhsInputSettings.*`
+- `VhsChromaSettings.phase_error_deg`
+- `VhsNoiseSettings.chroma_phase_noise_deg`
+- `VhsTransportSettings.head_switching_*`
+- `VhsDecodeSettings.output_transfer`
+- `VhsModel.standard` once concrete preset values are already carried by the rest of the model
+
 Current preview guardrails for manual / override-driven `SignalSettings`:
 
 - `tracking.line_jitter_px` uses a soft cap so strong values remain expressive but asymptotically stay below the current glitch-prone range
@@ -355,21 +374,25 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 
 Still deferred:
 
+- input-selector-driven runtime branching from `VhsInputSettings`
 - chroma phase error
+- chroma phase noise
 - head switching behavior
+- explicit output-transfer shaping
 - temporal model
 - render-graph planning
 - video support
 - richer authoring workflows for override presets and inspection tooling; the current explicit override API is intentionally minimal and still-image-focused
 
+For the field-level split between fully active, approximated, and deferred terms, use [`signal-model-v1-subset.md`](./signal-model-v1-subset.md) as the working reference.
+
 ## Consequence
 
 The next step is to extend this signal-model-aligned subset deliberately, not to replace the current architecture.
 
-The likely next implementation moves are:
+The most justified next implementation moves are:
 
-- refine luma and chroma branch behavior inside the current pass structure
-- refine line-level transport/dropout interplay only if the current fused output stage stops being sufficient
-- improve resource reuse and calibration workflow without changing the domain contract
+- activate the chroma-phase subset around `VhsChromaSettings.phase_error_deg` and `VhsNoiseSettings.chroma_phase_noise_deg` inside the existing chroma/reconstruction boundary
+- activate a restrained still-image head-switching subset from `VhsTransportSettings.head_switching_*` only if it can stay subordinate to bandwidth loss and tone shaping
 
 All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).
