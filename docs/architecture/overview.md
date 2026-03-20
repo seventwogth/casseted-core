@@ -33,6 +33,8 @@ The key point in the current phase is that the still-image path is now explicit 
 - the working GPU path groups them into five implementation stages and executes them as a compact four-pass runtime without a render graph
 - the compiled runtime layer owns reusable GPU execution state for that fixed pass chain, while `StillImagePipeline` remains only the high-level description of the still-image effect
 
+The field-level boundary is now explicit too: [`signal-model-v1-subset.md`](./signal-model-v1-subset.md) records which formal v1 fields are fully active, which are active only through the current projection/approximation layer, and which are still deliberately deferred.
+
 Why this degree of decomposition was chosen:
 
 - it gives the still path a real branch point between luma and chroma
@@ -76,4 +78,5 @@ The current verification foundation mirrors that structure:
 Reference documents:
 
 - [`signal-model-v1.md`](./signal-model-v1.md)
+- [`signal-model-v1-subset.md`](./signal-model-v1-subset.md)
 - [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)

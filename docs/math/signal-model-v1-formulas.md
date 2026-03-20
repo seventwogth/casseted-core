@@ -21,6 +21,8 @@ The current GPU implementation lives in:
 - `shaders/passes/still_chroma_degradation.wgsl`
 - `shaders/passes/still_reconstruction_output.wgsl`
 
+For the field-level split between active, approximated, and deferred formal terms, use [`../architecture/signal-model-v1-subset.md`](../architecture/signal-model-v1-subset.md) together with this formulas reference.
+
 ## 1. Scope
 
 The implemented still-image subset is:
@@ -175,6 +177,9 @@ moderate. Real analog pipelines are not scene-linear at the visible artifact lev
 
 Engineering approximation:
 `sRGB` input is accepted directly and converted to a BT.601-like working representation in shader code.
+
+Activation note:
+the stage is active under the fixed `sRGB` + BT.601-like + progressive still-frame assumptions above, but changing `VhsInputSettings` does not yet change the runtime path.
 
 Pipeline mapping:
 executed in `shaders/passes/still_input_conditioning.wgsl`, which writes the working YUV texture used by the later luma/chroma passes.
@@ -715,7 +720,7 @@ Mapping:
 
 - formal source: `VhsTransportSettings.line_jitter_us`
 - formal source for \(\delta_V\): `VhsTransportSettings.vertical_wander_lines`
-- pipeline projection: `project_vhs_model_to_preview_signal()` converts signed \(\mu s \to\) signed reference pixels
+- pipeline projection: `project_vhs_model_to_preview_signal()` converts the non-negative formal jitter amplitude into a restrained still-image reference-pixel amplitude; manual preview overrides are normalized separately by magnitude
 - shader uniforms: `effect.input_conditioning.z`, `effect.input_conditioning.w`, and `effect.frame.w`
 
 Calibration note:
@@ -962,26 +967,40 @@ Pipeline / shader mapping:
 | `RgbToLumaChroma` | first-pass working decomposition | `rgb_to_yuv()` in `still_input_conditioning.wgsl` |
 | `LumaRecordPath` | `SignalSettings.luma.blur_px` bandwidth-loss proxy + projected pre-emphasis gain + derived highlight-bleed threshold/amount from the current tone+luma state | `degrade_luma()`, `highlight_bleed()` |
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend | `degrade_chroma()` |
-| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` and `apply_input_conditioning()` |
-| `NoiseAndDropouts` | brightness-shaped luma contamination and softer band-correlated chroma contamination from `SignalSettings.noise.*`, plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_output_noise()`, `line_dropout_mask()`, `apply_dropout()` |
-| `DecodeOutput` | projected crosstalk + inverse matrix | `reconstruct_output()`, `yuv_to_rgb()` |
+| `TransportInstability` | `SignalSettings.tracking.*`; fused into the input-conditioning pass ahead of the working-signal fan-out | `conditioned_sample_uv()` |
+| `NoiseAndDropouts` | brightness-shaped luma contamination and softer band-correlated chroma contamination from `SignalSettings.noise.*`, plus model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
+| `DecodeOutput` | projected crosstalk + inverse matrix | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
 
-Implemented now:
+Use [`../architecture/signal-model-v1-subset.md`](../architecture/signal-model-v1-subset.md) for the full field-level status map. In short:
 
-- tone shaping with soft highlight compression
-- BT.601-like working `YUV` decomposition
-- luma two-scale low-pass/detail attenuation with restrained highlight bleed
-- delayed, band-limited, cell-integrated chroma path with restrained trailing contamination and saturation control
-- reconstruction back to RGB
-- line jitter, brightness-shaped luma contamination, softer chroma contamination, and restrained line-segment dropout handling
+Fully active:
+
+- `VhsToneSettings.highlight_soft_knee`
+- `VhsToneSettings.highlight_compression`
+- `VhsChromaSettings.saturation_gain`
+- `VhsDecodeSettings.chroma_vertical_blend`
+- `VhsDecodeSettings.luma_chroma_crosstalk`
+
+Partially active / approximated:
+
+- fixed `sRGB` + BT.601-like + progressive input assumptions at the stage level, without field-driven `VhsInputSettings` switching yet
+- `VhsLumaSettings.{bandwidth_mhz,preemphasis_db}` through the compact luma bandwidth/detail approximation
+- `VhsChromaSettings.{delay_us,bandwidth_khz}` through the compact chroma offset/bandwidth-loss approximation
+- `VhsTransportSettings.{line_jitter_us,vertical_wander_lines}` through the still-frame spatial transport subset
+- `VhsNoiseSettings.{luma_sigma,chroma_sigma}` through brightness-shaped luma contamination and softer chroma contamination
+- `VhsNoiseSettings.{dropout_probability_per_line,dropout_mean_span_us}` through restrained local still-image dropout concealment
+- derived highlight bleed from the current tone + luma state
 
 Documented here but not implemented yet:
 
+- `VhsInputSettings.{matrix,transfer,temporal_sampling}` as runtime selectors
 - chroma phase error from `VhsChromaSettings.phase_error_deg`
+- chroma phase noise from `VhsNoiseSettings.chroma_phase_noise_deg`
 - head-switching region behavior from `VhsTransportSettings.head_switching_*`
 - explicit output-transfer shaping from `VhsDecodeSettings.output_transfer`
+- `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
 
 ## 7. Projection Rules Used By The Current Still Pipeline
 
