@@ -357,7 +357,7 @@ fn head_switching_terms_pack_into_documented_runtime_uniform_lanes() {
 }
 
 #[test]
-fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset() {
+fn input_decode_selectors_remain_documented_only_in_runtime_subset() {
     let input = gradient_rgba8_image(FrameSize::new(720, 480));
     let base_model = VhsModel::default();
     let mut deferred_only = base_model;
@@ -365,7 +365,6 @@ fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset(
     deferred_only.input.matrix = VideoMatrix::Bt601;
     deferred_only.input.transfer = InputTransfer::Bt601;
     deferred_only.input.temporal_sampling = TemporalSampling::InterlacedFields;
-    deferred_only.decode.output_transfer = OutputTransfer::Bt1886Like;
 
     let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
     let deferred_pipeline = StillImagePipeline::from_vhs_model(deferred_only);
@@ -374,6 +373,29 @@ fn remaining_documented_only_formal_fields_do_not_change_current_runtime_subset(
         base_pipeline.preview_base_signal(),
         deferred_pipeline.preview_base_signal()
     );
+    assert_eq!(
+        effect_uniforms(&input, &base_pipeline),
+        effect_uniforms(&input, &deferred_pipeline)
+    );
+}
+
+#[test]
+fn output_transfer_selector_is_currently_deferred_in_runtime_subset() {
+    let input = gradient_rgba8_image(FrameSize::new(720, 480));
+    let base_model = VhsModel::default();
+    let mut deferred_only = base_model;
+    deferred_only.decode.output_transfer = OutputTransfer::Bt1886Like;
+
+    let base_pipeline = StillImagePipeline::from_vhs_model(base_model);
+    let deferred_pipeline = StillImagePipeline::from_vhs_model(deferred_only);
+    let base_stages = resolve_still_stages(&input, &base_pipeline);
+    let deferred_stages = resolve_still_stages(&input, &deferred_pipeline);
+
+    assert_eq!(
+        base_pipeline.preview_base_signal(),
+        deferred_pipeline.preview_base_signal()
+    );
+    assert_eq!(base_stages, deferred_stages);
     assert_eq!(
         effect_uniforms(&input, &base_pipeline),
         effect_uniforms(&input, &deferred_pipeline)

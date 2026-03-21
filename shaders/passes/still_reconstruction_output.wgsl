@@ -368,6 +368,9 @@ fn compose_display_yuv(
 }
 
 fn decode_output_rgb(display_yuv: vec3<f32>) -> vec3<f32> {
+    // The active still-image subset ends at clamped decoded RGB.
+    // Formal `output_transfer` remains deferred, so there is no additional
+    // post-decode display/output shaping step here.
     return clamp(yuv_to_rgb(display_yuv), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 

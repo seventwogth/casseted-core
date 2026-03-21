@@ -89,7 +89,7 @@ Those stages now execute through a limited four-pass runtime:
 | Input conditioning pass | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, plus the currently spatial subset of `TransportInstability` | `still_input_conditioning.wgsl` |
 | Luma pass | luma degradation | `LumaRecordPath` | `still_luma_degradation.wgsl` |
 | Chroma pass | chroma degradation | `ChromaRecordPath` | `still_chroma_degradation.wgsl` |
-| Reconstruction pass | reconstruction / output | `TransportInstability` (restrained head-switching subset), `NoiseAndDropouts` (dropout-conditioned reconstruction signal plus brightness-shaped luma contamination and softer chroma contamination), and `DecodeOutput` (residual Y/C leakage plus `YUV -> RGB` decode) | `still_reconstruction_output.wgsl` |
+| Reconstruction pass | reconstruction / output | `TransportInstability` (restrained head-switching subset), `NoiseAndDropouts` (dropout-conditioned reconstruction signal plus brightness-shaped luma contamination and softer chroma contamination), and `DecodeOutput` (residual Y/C leakage plus direct `YUV -> RGB` decode/clamp; explicit output transfer remains deferred) | `still_reconstruction_output.wgsl` |
 
 Why this grouping is used now:
 
@@ -176,10 +176,11 @@ restrained line-oriented dropout conditioning of the branch-resolved reconstruct
 ### 8. DecodeOutput
 
 Purpose:
-reconstruct a display-space RGB image from the degraded working signal.
+reconstruct a clamped display-coded RGB image from the degraded working signal while keeping explicit output-transfer selection outside the current active subset.
 
 Current v1 shape:
 `YUV -> RGB` reconstruction from the dropout-conditioned, contamination-augmented signal with a small Y/C leakage term that also backs off slightly inside stronger dropout concealment.
+The current still runtime stops there: it writes the decoded/clamped RGB numerics directly to output storage and does not yet activate `VhsDecodeSettings.output_transfer` as a post-decode transfer stage.
 
 ## Domain Ownership
 
@@ -314,7 +315,7 @@ Current stage-aligned mapping:
 
 The luma and chroma passes keep that uniform contract compact on purpose: the luma shader derives sample span, multi-band attenuation, and restrained bright-edge lag from the same `blur_px/detail_mix` pair, while the chroma shader derives low-pass span, effective chroma cell integration / width, and restrained contamination from one bandwidth-loss proxy instead of expanding the public preview API.
 
-The final pass now treats its compact contract the same way: `effect.reconstruction_output.xy` resolve to contamination amplitudes, `effect.reconstruction_output.z` resolves to residual Y/C leakage, and `effect.reconstruction_aux` now carries both the restrained dropout subset (`xy`) and the chroma-phase auxiliaries (`zw`). The pass boundary stays the same, but the internal sequence is now explicit instead of reading like one catch-all helper.
+The final pass now treats its compact contract the same way: `effect.reconstruction_output.xy` resolve to contamination amplitudes, `effect.reconstruction_output.z` resolves to residual Y/C leakage, and `effect.reconstruction_aux` now carries both the restrained dropout subset (`xy`) and the chroma-phase auxiliaries (`zw`). The pass boundary stays the same, but the internal sequence is now explicit instead of reading like one catch-all helper. That explicit sequence currently ends at `decode_output_rgb()`: inverse matrix plus clamp. There is still no separate output-transfer stage after decode.
 
 Secondary mappings that are still present but not the main focus of this phase:
 
@@ -328,6 +329,9 @@ Formal fields intentionally not projected into the current still runtime subset:
 - `VhsInputSettings.*`
 - `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` once concrete preset values are already carried by the rest of the model
+
+For `VhsDecodeSettings.output_transfer`, the current fixed runtime assumption is narrower than a real output pipeline:
+the final shader decodes to clamped RGB and the runtime stores those numerics directly in `RGBA8`, so the field remains deferred until a later decode/output milestone justifies an explicit post-decode output semantic boundary.
 
 Current preview guardrails for manual / override-driven `SignalSettings`:
 
@@ -380,7 +384,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 Still deferred:
 
 - input-selector-driven runtime branching from `VhsInputSettings`
-- explicit output-transfer shaping
+- explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - temporal model
 - render-graph planning
 - video support
@@ -394,7 +398,8 @@ The next step is to extend this signal-model-aligned subset deliberately, not to
 
 The most justified next implementation moves are:
 
-- decide later whether `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer` should become runtime selectors in still-image v1 or remain documented assumptions until a broader decode/output milestone exists
+- decide later whether `VhsInputSettings.*` should become runtime selectors inside still-image v1 without widening the architecture unnecessarily
+- keep `VhsDecodeSettings.output_transfer` deferred until a broader decode/output milestone can introduce an explicit post-decode output semantic boundary instead of a standalone look toggle
 - keep any future transport work subordinate to the current tone/luma/chroma foundation instead of escalating into a temporal or deck-accurate switching model too early
 
 All of that should keep the same domain contract anchored in `casseted-signal` and the same formula reference anchored in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md).

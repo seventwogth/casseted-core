@@ -122,10 +122,13 @@ Use this as the field-level companion to:
 - `VhsInputSettings.temporal_sampling`
   Current state: documented assumptions exist and the stage is active, but changing these fields does not yet change projection, uniforms, or WGSL behavior.
 
-### Chroma / transport / decode fields
+### Decode / output selector
 
 - `VhsDecodeSettings.output_transfer`
-  Current state: present in the formal model and docs, but not read by the current still runtime subset.
+  Current state: present in the formal model and docs, but changing it does not change projection, resolved stages, packed uniforms, or WGSL behavior in the current still runtime subset.
+  Current fixed assumptions: `still_reconstruction_output.wgsl` stops at `decode_output_rgb()`, which applies the inverse BT.601-like working matrix and clamps into `[0, 1]`, and `runtime.rs` writes those decoded RGB numerics directly to `Rgba8Unorm`.
+  Boundary note: the active subset therefore ends at reconstructed, contamination-shaped, decode-approximated RGB; display/output transfer behavior is still only an implicit numeric-storage assumption, not a formal-model-controlled term.
+  Why deferred: the current still path never establishes a separate output-referred or linear-light handoff, so activating `Srgb` versus `Bt1886Like` right now would mostly invent a new post-decode look layer rather than expose an already-grounded transfer stage.
 
 ### Standard metadata
 
@@ -135,5 +138,7 @@ Use this as the field-level companion to:
 
 ## Most Justified Next Activations
 
-1. `VhsInputSettings.*` and `VhsDecodeSettings.output_transfer`
-   Why next: they are now the clearest remaining decode-side selectors once the chroma-phase and restrained head-switching gaps are closed, but they should still be activated only if the still-image assumptions stay explicit and compact.
+1. `VhsInputSettings.*`
+   Why next: they are still the clearest remaining decode-side selectors that could later make the current fixed input assumptions explicit without expanding the runtime into a broader subsystem.
+2. A broader decode/output milestone, if later justified
+   Why later: `VhsDecodeSettings.output_transfer` should only move when the still path grows an explicit post-decode output semantic boundary, not as a standalone post-look toggle.
