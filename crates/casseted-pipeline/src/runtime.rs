@@ -8,6 +8,9 @@ use std::sync::mpsc;
 
 const BYTES_PER_PIXEL_RGBA8: u32 = 4;
 const INTERMEDIATE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+// The current still-image subset stops at decoded/clamped RGB numerics.
+// `output_transfer` remains deferred, so the runtime writes into plain unorm
+// storage instead of applying an additional framebuffer/output transfer step.
 const OUTPUT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 #[derive(Debug)]

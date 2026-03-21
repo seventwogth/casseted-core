@@ -677,7 +677,7 @@ recombine degraded luma and chroma into a display RGB image through one explicit
 
 1. condition the branch outputs with the restrained dropout approximation
 2. apply reconstruction/output contamination in `Y/C` space, including the stochastic low-band chroma phase perturbation
-3. apply the residual Y/C leakage term and decode to RGB
+3. apply the residual Y/C leakage term and decode to clamped RGB
 
 Mathematical meaning:
 take the head-switching-conditioned signal from section `5.2`, condition it further through the restrained dropout approximation from section `5.4`, apply the luma/chroma-specific contamination terms from section `5.3`, apply the residual Y/C leakage term to the luma reconstruction basis, then invert the working matrix. The deterministic chroma phase bias from section `4.4` is already baked into the incoming chroma signal; this final stage only adds the stochastic local perturbation term \(\Delta C_\phi\).
@@ -712,6 +712,9 @@ medium. Reconstruction is required, but the exact consumer-decoder behavior is s
 
 Engineering approximation:
 the still pass still reconstructs directly to clamped RGB in one final fragment stage, but it now keeps `head-switching-conditioned reconstruction signal -> dropout-conditioned reconstruction signal -> contamination -> decode` explicit inside that pass instead of treating the whole stage like one fused catch-all helper. The chroma phase term used here is still a restrained low-band UV-domain perturbation of the current chroma vector, not a full analog carrier/decode phase simulation, and the head-switching term stays a lower-band still-image seam/disturbance approximation rather than a full field-timing model.
+
+Current boundary note:
+the active subset ends at `decode_output_rgb()`, which applies the inverse working matrix and clamps into `[0, 1]`. The runtime then writes those numerics directly to plain `RGBA8` output storage. There is still no separate output-transfer term or post-decode display shaping step controlled by `VhsDecodeSettings.output_transfer`.
 
 Pipeline / shader mapping:
 
@@ -1115,7 +1118,7 @@ Pipeline / shader mapping:
 | `ChromaRecordPath` | `SignalSettings.chroma.*` + projected decode blend + deterministic chroma phase bias packed in `effect.reconstruction_aux.z` | `degrade_chroma()` |
 | `TransportInstability` | `SignalSettings.tracking.*` plus model-only head-switching auxiliaries; the global still-frame transport subset remains in the input-conditioning pass, while the lower switching band is applied later as a restrained reconstruction-side approximation | `conditioned_sample_uv()`, `apply_head_switching_approximation()` |
 | `NoiseAndDropouts` | brightness-shaped luma contamination, softer band-correlated chroma contamination from `SignalSettings.noise.*`, stochastic low-band chroma phase noise packed in `effect.reconstruction_aux.w`, and model-driven dropout auxiliaries from `VhsNoiseSettings.dropout_*` | `sample_reconstruction_contamination()`, `line_dropout_mask()`, `apply_dropout_approximation()` |
-| `DecodeOutput` | projected crosstalk + inverse matrix | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
+| `DecodeOutput` | projected crosstalk + inverse matrix + clamp to output numerics | `compose_display_yuv()`, `decode_output_rgb()`, `yuv_to_rgb()` |
 
 ### 6.3 What is implemented now vs later
 
@@ -1144,7 +1147,7 @@ Partially active / approximated:
 Documented here but not implemented yet:
 
 - `VhsInputSettings.{matrix,transfer,temporal_sampling}` as runtime selectors
-- explicit output-transfer shaping from `VhsDecodeSettings.output_transfer`
+- explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
 
 ## 7. Projection Rules Used By The Current Still Pipeline

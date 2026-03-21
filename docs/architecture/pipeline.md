@@ -35,10 +35,11 @@ Those five stages are now executed as a limited four-pass runtime.
 | `still_input_conditioning` | working YUV texture | input conditioning / tone shaping + luma/chroma transform | `InputDecode`, `ToneShaping`, `RgbToLumaChroma`, and the current still-frame spatial subset of `TransportInstability` |
 | `still_luma_degradation` | degraded luma texture | luma degradation via two-scale low-pass/detail attenuation with restrained bright-edge lag and highlight bleed | `LumaRecordPath` |
 | `still_chroma_degradation` | degraded chroma texture | chroma degradation via low-pass, coarse chroma reconstruction, restrained smear, optional vertical line blend, and restrained chroma-phase bias | `ChromaRecordPath` |
-| `still_reconstruction_output` | final `RGBA8` output | reconstruction / output with a restrained lower-band head-switching approximation, dropout-conditioned `Y/C` reconstruction, brightness-shaped luma contamination, softer chroma contamination, restrained chroma phase noise, and restrained line-segment dropout concealment | `TransportInstability` (head-switching subset), `NoiseAndDropouts` (refined contamination + still-image dropout subset), and `DecodeOutput` |
+| `still_reconstruction_output` | final `RGBA8` output | reconstruction / output with a restrained lower-band head-switching approximation, dropout-conditioned `Y/C` reconstruction, brightness-shaped luma contamination, softer chroma contamination, restrained chroma phase noise, restrained line-segment dropout concealment, and direct clamped `YUV -> RGB` decode | `TransportInstability` (head-switching subset), `NoiseAndDropouts` (refined contamination + still-image dropout subset), and `DecodeOutput` |
 
 Important detail:
 the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it remains fused into the first pass instead of becoming a standalone transport pass.
+The same compactness applies at the output edge too: the current final pass stops at decoded/clamped RGB written into `RGBA8`, while `VhsDecodeSettings.output_transfer` stays deferred until a later decode/output milestone can justify a real post-decode semantic boundary.
 
 ## Projection layer
 
@@ -139,5 +140,6 @@ The following are still deferred:
 - render-graph planning
 - dedicated dropout-only masking passes
 - advanced head-switching timing / deck-geometry behavior
+- explicit post-decode `output_transfer` activation
 - video and temporal state
 - texture pooling and broader readback reuse
