@@ -36,6 +36,13 @@ struct ReconstructionContamination {
     chroma: vec2<f32>,
 };
 
+struct QuietRegionProfile {
+    quiet_luma: f32,
+    quiet_chroma: f32,
+    quiet_mix: f32,
+    dark_mix: f32,
+};
+
 @group(0) @binding(0) var luma_texture: texture_2d<f32>;
 @group(0) @binding(1) var chroma_texture: texture_2d<f32>;
 @group(0) @binding(2) var signal_sampler: sampler;
@@ -102,6 +109,35 @@ fn sample_reconstruction_signal(uv: vec2<f32>) -> ReconstructionSignal {
     signal.luma = sample_luma(uv);
     signal.chroma = sample_chroma(uv);
     return signal;
+}
+
+fn quiet_region_profile(
+    uv: vec2<f32>,
+    signal: ReconstructionSignal,
+) -> QuietRegionProfile {
+    let inv_size = frame_inv_size();
+    let left = sample_reconstruction_signal(uv - vec2<f32>(inv_size.x, 0.0));
+    let right = sample_reconstruction_signal(uv + vec2<f32>(inv_size.x, 0.0));
+    let up = sample_reconstruction_signal(uv - vec2<f32>(0.0, inv_size.y));
+    let down = sample_reconstruction_signal(uv + vec2<f32>(0.0, inv_size.y));
+
+    let luma_gradient = max(
+        max(abs(signal.luma - left.luma), abs(signal.luma - right.luma)),
+        max(abs(signal.luma - up.luma), abs(signal.luma - down.luma)),
+    );
+    let chroma_gradient = max(
+        max(length(signal.chroma - left.chroma), length(signal.chroma - right.chroma)),
+        max(length(signal.chroma - up.chroma), length(signal.chroma - down.chroma)),
+    );
+
+    var profile: QuietRegionProfile;
+    profile.dark_mix = 1.0 - smoothstep(0.16, 0.52, clamp(signal.luma, 0.0, 1.0));
+    profile.quiet_luma = 1.0 - smoothstep(0.020, 0.110, luma_gradient);
+    profile.quiet_chroma = 1.0 - smoothstep(0.015, 0.070, chroma_gradient);
+    profile.quiet_mix = profile.quiet_luma
+        * mix(0.78, 1.0, profile.quiet_chroma)
+        * mix(0.82, 1.0, profile.dark_mix);
+    return profile;
 }
 
 fn frame_inv_size() -> vec2<f32> {
@@ -193,6 +229,7 @@ fn apply_head_switching_approximation(
 }
 
 fn sample_reconstruction_contamination(
+    uv: vec2<f32>,
     noise_coord: vec2<f32>,
     signal: ReconstructionSignal,
     disturbance_mix: f32,
@@ -200,6 +237,11 @@ fn sample_reconstruction_contamination(
     let frame_index = effect.frame.w;
     let clamped_luma = clamp(signal.luma, 0.0, 1.0);
     let chroma_disturbance_scale = mix(1.0, 0.45, disturbance_mix);
+    let quiet_profile = quiet_region_profile(uv, signal);
+    let quiet_luma_surface_mix =
+        quiet_profile.quiet_luma * (0.35 + 0.65 * quiet_profile.dark_mix);
+    let quiet_surface_mix =
+        quiet_profile.quiet_mix * (0.35 + 0.65 * quiet_profile.dark_mix);
 
     var contamination: ReconstructionContamination;
     contamination.luma = 0.0;
@@ -214,8 +256,30 @@ fn sample_reconstruction_contamination(
             vec2<f32>(11.0, 0.31),
         );
         let luma_line = centered_hash(vec2<f32>(noise_coord.y + 29.0, frame_index + 13.0));
+        let luma_surface_band = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 109.0),
+            0.045,
+            vec2<f32>(107.0, 0.13),
+        );
+        let luma_surface_drift = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 149.0),
+            0.018,
+            vec2<f32>(149.0, 0.09),
+        );
+        let luma_surface_line = centered_hash(
+            vec2<f32>(noise_coord.y * 0.22 + 173.0, frame_index + 59.0),
+        );
         let luma_disturbance_scale = mix(1.0, 0.72, disturbance_mix);
-        contamination.luma = (luma_fine * 0.45 + luma_band * 0.35 + luma_line * 0.20)
+        let quiet_luma_carrier = luma_surface_band * 0.52
+            + luma_surface_drift * 0.32
+            + luma_surface_line * 0.16;
+        let luma_texture = luma_fine * mix(0.45, 0.22, quiet_luma_surface_mix)
+            + luma_band * mix(0.35, 0.44, quiet_luma_surface_mix)
+            + luma_line * mix(0.20, 0.16, quiet_luma_surface_mix);
+        let quiet_luma_additive = quiet_luma_carrier
+            * quiet_luma_surface_mix
+            * (0.26 + 0.24 * quiet_profile.dark_mix);
+        contamination.luma = (luma_texture + quiet_luma_additive)
             * effect.reconstruction_output.x
             * luma_visibility
             * luma_disturbance_scale;
@@ -236,11 +300,33 @@ fn sample_reconstruction_contamination(
             centered_hash(vec2<f32>(noise_coord.y * 0.5 + 97.0, frame_index + 23.0));
         let chroma_line_v =
             centered_hash(vec2<f32>(noise_coord.y * 0.5 + 131.0, frame_index + 31.0));
+        let chroma_surface_u = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 181.0),
+            0.035,
+            vec2<f32>(181.0, 0.11),
+        );
+        let chroma_surface_v = smooth_noise_x(
+            noise_coord + vec2<f32>(0.0, 211.0),
+            0.028,
+            vec2<f32>(211.0, 0.15),
+        );
+        let chroma_surface_line_u =
+            centered_hash(vec2<f32>(noise_coord.y * 0.20 + 227.0, frame_index + 67.0));
+        let chroma_surface_line_v =
+            centered_hash(vec2<f32>(noise_coord.y * 0.18 + 257.0, frame_index + 79.0));
         let chroma_visibility = 0.55 + 0.25 * pow(1.0 - clamped_luma, 0.5);
-        let chroma_additive = vec2<f32>(
+        let quiet_chroma_mix =
+            quiet_profile.quiet_mix * (0.12 + 0.42 * quiet_profile.dark_mix);
+        let chroma_texture = vec2<f32>(
             chroma_band_u * 0.72 + chroma_line_u * 0.28,
             chroma_band_v * 0.72 + chroma_line_v * 0.28,
-        ) * effect.reconstruction_output.y
+        );
+        let chroma_surface = vec2<f32>(
+            chroma_surface_u * 0.74 + chroma_surface_line_u * 0.26,
+            chroma_surface_v * 0.74 + chroma_surface_line_v * 0.26,
+        );
+        let chroma_additive = (chroma_texture + chroma_surface * quiet_chroma_mix * 0.12)
+            * effect.reconstruction_output.y
             * chroma_visibility
             * chroma_disturbance_scale;
         contamination.chroma = chroma_additive;
@@ -258,7 +344,8 @@ fn sample_reconstruction_contamination(
             centered_hash(vec2<f32>(noise_coord.y * 0.35 + 157.0, frame_index + 43.0));
         let phase_perturbation = (phase_band * 0.74 + phase_line * 0.26)
             * effect.reconstruction_aux.w
-            * chroma_disturbance_scale;
+            * chroma_disturbance_scale
+            * (1.0 + quiet_surface_mix * 0.18);
         let rotated_chroma = rotate_chroma(signal.chroma, phase_perturbation);
         contamination.chroma = contamination.chroma + (rotated_chroma - signal.chroma);
     }
@@ -412,6 +499,7 @@ fn fs_main(in: VsOutput) -> @location(0) vec4<f32> {
     );
     let disturbance_mix = max(dropout.dropout_mix, head_switching.switching_mix);
     let contamination = sample_reconstruction_contamination(
+        in.uv,
         seed.noise_coord,
         dropout.signal,
         disturbance_mix,

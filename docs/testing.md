@@ -17,12 +17,14 @@ Current layers:
   portrait-like midtones,
   bright highlights,
   neutral / low-saturation scenes,
-  and UI-like high-frequency detail
+  UI-like high-frequency detail,
+  and a dark quiet-floor case used to sanity-check low-amplitude reconstruction activity
 - corpus-backed sanity checks over `assets/reference-images/` that verify:
   the current bucket structure exists,
   the bucket PNGs load,
   the default pipeline produces non-identical output,
   and the compiled runtime path matches the direct GPU path on that corpus
+- calibration metrics now also track quiet-region and dark-quiet-region deltas on the synthetic set so quiet-content refinements stay measurable without introducing a larger golden-image system
 
 What is intentionally not present yet:
 

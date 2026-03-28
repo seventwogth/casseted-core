@@ -85,8 +85,17 @@ The repository also keeps a small synthetic calibration set in `casseted-pipelin
 - bright highlights
 - neutral / low-saturation scenes
 - high-frequency UI-like detail
+- dark quiet-floor behavior
 
 That combined synthetic-plus-corpus layer is intentionally note-sized rather than dataset-sized. Its role is to keep the current signal-first hierarchy honest across quiet content, highlight content, and edge-heavy content without introducing a larger fixture-management system.
+
+Quiet-content reconstruction calibration note:
+the primary corpus buckets for the current refinement pass are
+`04_portrait-skin`,
+`05_ui-text-detail`,
+`06_neutral-interior`,
+and `08_dark-screen-noise`.
+`01_target-look`, `02_highlights-specular`, `03_color-edges-chroma`, and `07_silhouette-low-detail` remain secondary cross-checks for hierarchy restraint.
 
 ## 2. Notation And Variables
 
@@ -915,6 +924,48 @@ Let the final pass reuse the stronger of dropout and head-switching support as o
 \gamma_T = \max(\gamma_D, \gamma_S)
 \]
 
+For the current quiet-content refinement, the same pass also derives a compact local calm-surface profile from the immediate reconstruction neighborhood:
+
+\[
+\nabla_Y =
+\max\left(
+|Y_L^\star - Y_L^\star(x - 1, y)|,
+|Y_L^\star - Y_L^\star(x + 1, y)|,
+|Y_L^\star - Y_L^\star(x, y - 1)|,
+|Y_L^\star - Y_L^\star(x, y + 1)|
+\right)
+\]
+
+\[
+\nabla_C =
+\max\left(
+\|C_D^\star - C_D^\star(x - 1, y)\|,
+\|C_D^\star - C_D^\star(x + 1, y)\|,
+\|C_D^\star - C_D^\star(x, y - 1)\|,
+\|C_D^\star - C_D^\star(x, y + 1)\|
+\right)
+\]
+
+\[
+q_Y = 1 - \operatorname{smoothstep}(0.020, 0.110, \nabla_Y)
+\]
+
+\[
+q_C = 1 - \operatorname{smoothstep}(0.015, 0.070, \nabla_C)
+\]
+
+\[
+d_Q = 1 - \operatorname{smoothstep}(0.16, 0.52, Y_L^\star)
+\]
+
+\[
+q_L = q_Y (0.35 + 0.65d_Q)
+\]
+
+\[
+q_Q = q_Y\operatorname{mix}(0.78, 1.0, q_C)\operatorname{mix}(0.82, 1.0, d_Q)
+\]
+
 Brightness-shaped luma contamination:
 
 \[
@@ -926,11 +977,19 @@ g_Y = \operatorname{mix}(1.0, 0.72, \gamma_T)
 \]
 
 \[
+\eta_{YQ} =
+0.52b(x, y; 0.045, 107, 0.13)
++ 0.32b(x, y; 0.018, 149, 0.09)
++ 0.16\xi(0.22y + 173,\; f + 59)
+\]
+
+\[
 n_Y^\star =
 a_Y m_Y g_Y \left(
-0.45\xi(x + f,\; y + 3)
-+ 0.35b(x, y; 0.12, 11, 0.31)
-+ 0.20\xi(y + 29,\; f + 13)
+0.45(1 - q_L)\xi(x + f,\; y + 3)
++ (0.35 + 0.09q_L)b(x, y; 0.12, 11, 0.31)
++ (0.20 - 0.04q_L)\xi(y + 29,\; f + 13)
++ q_L(0.26 + 0.24d_Q)\eta_{YQ}
 \right)
 \]
 
@@ -953,15 +1012,25 @@ g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_T)
 \]
 
 \[
+\eta_{UQ} = 0.74b(x, y; 0.035, 181, 0.11) + 0.26\xi(0.20y + 227,\; f + 67)
+\]
+
+\[
+\eta_{VQ} = 0.74b(x, y; 0.028, 211, 0.15) + 0.26\xi(0.18y + 257,\; f + 79)
+\]
+
+\[
 \nu_\phi = 0.74b(x, y; 0.05, 89, 0.17) + 0.26\xi(0.35y + 157,\; f + 43)
 \]
 
 \[
-\Delta C_A = a_C m_C g_C^D (\eta_U,\eta_V)
+\Delta C_A = a_C m_C g_C^D \left(
+(\eta_U,\eta_V) + 0.12q_Q(0.12 + 0.42d_Q)(\eta_{UQ},\eta_{VQ})
+\right)
 \]
 
 \[
-\delta_\phi = \sigma_\phi g_C^D \nu_\phi
+\delta_\phi = \sigma_\phi g_C^D (1 + 0.18q_Q)\nu_\phi
 \]
 
 \[
@@ -977,7 +1046,7 @@ Mapping:
 - shader uniforms: `effect.reconstruction_output.x`, `effect.reconstruction_output.y`, `effect.reconstruction_aux.w`
 
 Calibration note:
-the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, keeps chroma contamination broader and softer than luma contamination, and applies phase noise as a separate low-band chroma-vector perturbation rather than as a spatial RGB split. All of those terms are attenuated inside dropout masks so localized signal loss remains readable.
+the current still-image v1 path keeps luma contamination more visible in dark/mid tones, gives it mild line/band correlation, and now biases its lowest-amplitude carrier more strongly toward locally calm surfaces so quiet scenes stop reading too sterile. Chroma contamination stays broader and softer than luma contamination, phase noise remains a separate low-band chroma-vector perturbation rather than a spatial RGB split, and all of those terms are still attenuated inside dropout masks so localized signal loss remains readable. This is a reference-driven calibration aimed primarily at `04_portrait-skin`, `05_ui-text-detail`, `06_neutral-interior`, and `08_dark-screen-noise`, not a new artifact family.
 
 ### 5.4 Dropout Approximation
 
@@ -1256,9 +1325,10 @@ the projection now overweights luma/chroma bandwidth loss relative to transport 
 Current baseline assessment:
 
 - this priority now holds up well on bright highlights and colored-shape content
-- the remaining practical gap is quieter content:
-  neutral scenes, skin-like midtones, and UI/text detail still expose that the current default reconstruction character is intentionally conservative
-- in other words, the current limiting factor is not an over-strong final stage; it is that low-amplitude reconstruction/output character is still a bit too weak to fully carry quiet still images away from a clean digital baseline
+- the quiet-content reconstruction gap is narrower now:
+  neutral scenes, skin-like midtones, UI/text detail, and dark quiet floors all keep a slightly more convincing low-amplitude carrier instead of staying as untouched between stronger artifacts
+- the next practical gap is narrower and more edge-specific:
+  very small colored high-frequency accents can still leave chroma a little too intact relative to softened luma structure
 
 ### 7.1 Preview/manual guardrails
 

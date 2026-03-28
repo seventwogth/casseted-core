@@ -15,14 +15,16 @@ enum CalibrationCase {
     BrightHighlights,
     NeutralLowSaturation,
     UiDetailEdges,
+    DarkQuietFloor,
 }
 
-const CALIBRATION_CASES: [CalibrationCase; 5] = [
+const CALIBRATION_CASES: [CalibrationCase; 6] = [
     CalibrationCase::ColoredEdges,
     CalibrationCase::PortraitMidtones,
     CalibrationCase::BrightHighlights,
     CalibrationCase::NeutralLowSaturation,
     CalibrationCase::UiDetailEdges,
+    CalibrationCase::DarkQuietFloor,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -36,6 +38,10 @@ struct CalibrationMetrics {
     input_mean_chroma_magnitude: f32,
     output_mean_chroma_magnitude: f32,
     highlight_band_luma_diff: f32,
+    quiet_region_mean_luma_diff: f32,
+    quiet_region_mean_chroma_diff: f32,
+    dark_quiet_region_mean_luma_diff: f32,
+    dark_quiet_region_mean_chroma_diff: f32,
 }
 
 impl CalibrationMetrics {
@@ -56,6 +62,7 @@ impl CalibrationCase {
             Self::BrightHighlights => "bright-highlights",
             Self::NeutralLowSaturation => "neutral-low-saturation",
             Self::UiDetailEdges => "ui-detail-edges",
+            Self::DarkQuietFloor => "dark-quiet-floor",
         }
     }
 
@@ -66,6 +73,7 @@ impl CalibrationCase {
             Self::BrightHighlights => bright_highlights_image(CALIBRATION_SIZE),
             Self::NeutralLowSaturation => neutral_low_saturation_image(CALIBRATION_SIZE),
             Self::UiDetailEdges => ui_detail_edges_image(CALIBRATION_SIZE),
+            Self::DarkQuietFloor => dark_quiet_floor_image(CALIBRATION_SIZE),
         }
     }
 
@@ -85,8 +93,13 @@ impl CalibrationCase {
             }
             Self::PortraitMidtones => {
                 assert!(
-                    metrics.luma_edge_retention() + 0.03 >= metrics.chroma_edge_retention(),
+                    metrics.luma_edge_retention() + 0.04 >= metrics.chroma_edge_retention(),
                     "{} should keep portrait structure at least as stable as chroma detail",
+                    self.key()
+                );
+                assert!(
+                    metrics.quiet_region_mean_luma_diff > 0.0014,
+                    "{} should carry some low-amplitude quiet-region luma character",
                     self.key()
                 );
                 assert!(
@@ -115,6 +128,11 @@ impl CalibrationCase {
                     self.key()
                 );
                 assert!(
+                    metrics.quiet_region_mean_luma_diff > 0.0011,
+                    "{} should no longer leave quiet neutral regions too untouched",
+                    self.key()
+                );
+                assert!(
                     metrics.output_mean_chroma_magnitude
                         <= metrics.input_mean_chroma_magnitude + 0.010,
                     "{} should not inject strong chroma contamination into neutral content",
@@ -128,8 +146,31 @@ impl CalibrationCase {
                     self.key()
                 );
                 assert!(
+                    metrics.quiet_region_mean_luma_diff > 0.0016,
+                    "{} should still introduce subtle quiet-region character around UI/text detail",
+                    self.key()
+                );
+                assert!(
                     metrics.mean_luma_diff > metrics.mean_chroma_diff * 2.0,
                     "{} should still respond primarily through luma degradation",
+                    self.key()
+                );
+            }
+            Self::DarkQuietFloor => {
+                assert!(
+                    metrics.dark_quiet_region_mean_luma_diff > 0.0012,
+                    "{} should lift the dark quiet floor with restrained analog activity",
+                    self.key()
+                );
+                assert!(
+                    metrics.dark_quiet_region_mean_chroma_diff
+                        <= metrics.dark_quiet_region_mean_luma_diff * 0.95 + 0.0015,
+                    "{} should keep dark-floor contamination primarily luma-led",
+                    self.key()
+                );
+                assert!(
+                    metrics.luma_edge_retention() > 0.35,
+                    "{} should not collapse the remaining dark-scene structure",
                     self.key()
                 );
             }
@@ -172,6 +213,12 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
     let mut output_mean_chroma_magnitude = 0.0;
     let mut highlight_band_luma_diff = 0.0;
     let mut highlight_samples = 0_u32;
+    let mut quiet_region_mean_luma_diff = 0.0;
+    let mut quiet_region_mean_chroma_diff = 0.0;
+    let mut dark_quiet_region_mean_luma_diff = 0.0;
+    let mut dark_quiet_region_mean_chroma_diff = 0.0;
+    let mut quiet_region_samples = 0_u32;
+    let mut dark_quiet_region_samples = 0_u32;
     let width = input.descriptor.size.width as usize;
     let height = input.descriptor.size.height as usize;
     let mut pixels = 0_u32;
@@ -179,17 +226,8 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
 
     for y in 0..height {
         for x in 0..width {
-            let pixel_index = (y * width + x) * 4;
-            let input_yuv = rgb_to_yuv(
-                input.data[pixel_index],
-                input.data[pixel_index + 1],
-                input.data[pixel_index + 2],
-            );
-            let output_yuv = rgb_to_yuv(
-                output.data[pixel_index],
-                output.data[pixel_index + 1],
-                output.data[pixel_index + 2],
-            );
+            let input_yuv = sample_yuv(input, width, x, y);
+            let output_yuv = sample_yuv(output, width, x, y);
 
             mean_luma_diff += (input_yuv.0 - output_yuv.0).abs();
             mean_chroma_diff +=
@@ -204,18 +242,46 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
                 highlight_samples += 1;
             }
 
+            if x > 0 && x + 1 < width && y > 0 && y + 1 < height {
+                let input_left_yuv = sample_yuv(input, width, x - 1, y);
+                let input_right_yuv = sample_yuv(input, width, x + 1, y);
+                let input_up_yuv = sample_yuv(input, width, x, y - 1);
+                let input_down_yuv = sample_yuv(input, width, x, y + 1);
+                let quiet_luma_gradient = f32::max(
+                    f32::max((input_yuv.0 - input_left_yuv.0).abs(), (input_yuv.0 - input_right_yuv.0).abs()),
+                    f32::max((input_yuv.0 - input_up_yuv.0).abs(), (input_yuv.0 - input_down_yuv.0).abs()),
+                );
+                let quiet_chroma_gradient = f32::max(
+                    f32::max(
+                        chroma_distance(input_yuv.1, input_yuv.2, input_left_yuv.1, input_left_yuv.2),
+                        chroma_distance(input_yuv.1, input_yuv.2, input_right_yuv.1, input_right_yuv.2),
+                    ),
+                    f32::max(
+                        chroma_distance(input_yuv.1, input_yuv.2, input_up_yuv.1, input_up_yuv.2),
+                        chroma_distance(input_yuv.1, input_yuv.2, input_down_yuv.1, input_down_yuv.2),
+                    ),
+                );
+                let is_quiet_region = quiet_luma_gradient < 0.035 && quiet_chroma_gradient < 0.024;
+
+                if is_quiet_region {
+                    let luma_diff = (input_yuv.0 - output_yuv.0).abs();
+                    let chroma_diff =
+                        (input_yuv.1 - output_yuv.1).abs() + (input_yuv.2 - output_yuv.2).abs();
+                    quiet_region_mean_luma_diff += luma_diff;
+                    quiet_region_mean_chroma_diff += chroma_diff;
+                    quiet_region_samples += 1;
+
+                    if input_yuv.0 < 0.22 {
+                        dark_quiet_region_mean_luma_diff += luma_diff;
+                        dark_quiet_region_mean_chroma_diff += chroma_diff;
+                        dark_quiet_region_samples += 1;
+                    }
+                }
+            }
+
             if x + 1 < width {
-                let right_pixel_index = pixel_index + 4;
-                let input_right_yuv = rgb_to_yuv(
-                    input.data[right_pixel_index],
-                    input.data[right_pixel_index + 1],
-                    input.data[right_pixel_index + 2],
-                );
-                let output_right_yuv = rgb_to_yuv(
-                    output.data[right_pixel_index],
-                    output.data[right_pixel_index + 1],
-                    output.data[right_pixel_index + 2],
-                );
+                let input_right_yuv = sample_yuv(input, width, x + 1, y);
+                let output_right_yuv = sample_yuv(output, width, x + 1, y);
                 input_luma_edge_energy += (input_yuv.0 - input_right_yuv.0).abs();
                 output_luma_edge_energy += (output_yuv.0 - output_right_yuv.0).abs();
                 input_chroma_edge_energy += chroma_distance(
@@ -251,6 +317,26 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
         } else {
             highlight_band_luma_diff / highlight_samples as f32
         },
+        quiet_region_mean_luma_diff: if quiet_region_samples == 0 {
+            0.0
+        } else {
+            quiet_region_mean_luma_diff / quiet_region_samples as f32
+        },
+        quiet_region_mean_chroma_diff: if quiet_region_samples == 0 {
+            0.0
+        } else {
+            quiet_region_mean_chroma_diff / quiet_region_samples as f32
+        },
+        dark_quiet_region_mean_luma_diff: if dark_quiet_region_samples == 0 {
+            0.0
+        } else {
+            dark_quiet_region_mean_luma_diff / dark_quiet_region_samples as f32
+        },
+        dark_quiet_region_mean_chroma_diff: if dark_quiet_region_samples == 0 {
+            0.0
+        } else {
+            dark_quiet_region_mean_chroma_diff / dark_quiet_region_samples as f32
+        },
     }
 }
 
@@ -268,6 +354,15 @@ fn rgb_to_yuv(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     let u = (b - y) * 0.492_111;
     let v = (r - y) * 0.877_283;
     (y, u, v)
+}
+
+fn sample_yuv(frame: &ImageFrame, width: usize, x: usize, y: usize) -> (f32, f32, f32) {
+    let pixel_index = (y * width + x) * 4;
+    rgb_to_yuv(
+        frame.data[pixel_index],
+        frame.data[pixel_index + 1],
+        frame.data[pixel_index + 2],
+    )
 }
 
 fn build_image<F>(size: FrameSize, mut pixel: F) -> ImageFrame
@@ -448,6 +543,58 @@ fn ui_detail_edges_image(size: FrameSize) -> ImageFrame {
     })
 }
 
+fn dark_quiet_floor_image(size: FrameSize) -> ImageFrame {
+    build_image(size, |x, y| {
+        let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
+        let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
+        let mut rgb = [
+            0.035 + fy * 0.020,
+            0.038 + fy * 0.018,
+            0.044 + fy * 0.026,
+        ];
+
+        let vertical_band = (fx - 0.76).abs();
+        if vertical_band < 0.08 {
+            let band = (1.0 - vertical_band / 0.08).clamp(0.0, 1.0);
+            rgb[0] += band * 0.028;
+            rgb[1] += band * 0.024;
+            rgb[2] += band * 0.040;
+        }
+
+        let logo_dx = fx - 0.42;
+        let logo_dy = fy - 0.34;
+        let logo_radius = (logo_dx * logo_dx + logo_dy * logo_dy).sqrt();
+        if logo_radius < 0.12 {
+            let ring = ((0.12 - logo_radius) / 0.08).clamp(0.0, 1.0);
+            rgb = [
+                0.12 + ring * 0.62,
+                0.11 + ring * 0.54,
+                0.10 + ring * 0.30,
+            ];
+            if logo_radius < 0.055 {
+                rgb = [0.86, 0.84, 0.80];
+            }
+        }
+
+        if x > size.width / 2 - 8
+            && x < size.width / 2 + 10
+            && y > size.height - 18
+            && y < size.height - 8
+        {
+            rgb = [0.78, 0.78, 0.80];
+        }
+
+        if x > 12 && x < 20 && y > size.height - 26 && y < size.height - 10 {
+            rgb = [0.06, 0.07, 0.08];
+            if y % 4 == 0 {
+                rgb = [0.78, 0.79, 0.82];
+            }
+        }
+
+        rgba8(rgb)
+    })
+}
+
 fn rgba8(rgb: [f32; 3]) -> [u8; 4] {
     [
         (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -471,13 +618,17 @@ fn representative_calibration_cases_preserve_signal_first_hierarchy_when_gpu_is_
         let metrics = calibration_metrics(&input, &output);
 
         println!(
-            "{}: luma_diff={:.4} chroma_diff={:.4} luma_retention={:.4} chroma_retention={:.4} highlight_band_luma_diff={:.4}",
+            "{}: luma_diff={:.4} chroma_diff={:.4} luma_retention={:.4} chroma_retention={:.4} highlight_band_luma_diff={:.4} quiet_luma_diff={:.4} quiet_chroma_diff={:.4} dark_quiet_luma_diff={:.4} dark_quiet_chroma_diff={:.4}",
             case.key(),
             metrics.mean_luma_diff,
             metrics.mean_chroma_diff,
             metrics.luma_edge_retention(),
             metrics.chroma_edge_retention(),
             metrics.highlight_band_luma_diff,
+            metrics.quiet_region_mean_luma_diff,
+            metrics.quiet_region_mean_chroma_diff,
+            metrics.dark_quiet_region_mean_luma_diff,
+            metrics.dark_quiet_region_mean_chroma_diff,
         );
 
         assert_images_not_identical(&input, &output);
