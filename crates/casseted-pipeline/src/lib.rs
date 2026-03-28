@@ -16,4 +16,7 @@ pub use state::StillImagePipeline;
 mod stage_regression;
 
 #[cfg(test)]
+mod calibration;
+
+#[cfg(test)]
 mod tests;

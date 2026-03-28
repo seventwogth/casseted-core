@@ -74,6 +74,28 @@ The current verification foundation mirrors that structure:
 - committed PNG fixtures live in `assets/reference-images/still-pipeline-v1/`
 - `casseted-pipeline` runs stage-oriented reference tests against those fixtures with fixed tolerances
 - `casseted-testing` provides the deterministic source card, PNG helpers, and image-difference assertions
+- `casseted-pipeline` also now runs a small synthetic calibration set for representative still-image classes:
+  colored edges / shapes,
+  portrait-like midtones,
+  bright highlights,
+  neutral / low-saturation scenes,
+  and high-frequency UI-like detail
+- the compiled runtime path is checked against the direct GPU path on those same calibration cases, so runtime reuse stays aligned with the baseline review inputs
+
+Still-image baseline assessment after that calibration pass:
+
+- strongest stages:
+  input conditioning / tone shaping,
+  luma degradation,
+  and the current chroma bandwidth-loss / reconstruction branch
+- strongest image classes:
+  bright highlights and colored-shape scenes, where tone rolloff, highlight spread, and chroma softening stay subordinate and coherent
+- weakest image classes:
+  neutral / low-saturation scenes and UI-like high-frequency detail, where the default path can still read slightly too clean or too proxy-like because low-amplitude reconstruction character remains very restrained
+- systematic balance:
+  the current chain does not look dominated by one runaway refinement milestone; the remaining imbalance is mostly that quiet-scene reconstruction character is conservative, not that final-stage effects are too strong
+- highest-value next milestone:
+  a compact reconstruction-side calibration pass for quiet content, focused on neutral surfaces, skin-like midtones, and UI/text detail rather than on adding a new artifact family
 
 Reference documents:
 

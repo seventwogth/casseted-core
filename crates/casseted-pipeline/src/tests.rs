@@ -317,13 +317,28 @@ fn head_switching_terms_bypass_preview_projection_but_change_runtime_stage_state
         base_pipeline.preview_base_signal(),
         switching_pipeline.preview_base_signal()
     );
-    assert_eq!(base_stages.reconstruction_output.head_switching_band_lines, 0.0);
-    assert_eq!(base_stages.reconstruction_output.head_switching_offset_px, 0.0);
     assert_eq!(
-        switching_stages.reconstruction_output.head_switching_band_lines,
+        base_stages.reconstruction_output.head_switching_band_lines,
+        0.0
+    );
+    assert_eq!(
+        base_stages.reconstruction_output.head_switching_offset_px,
+        0.0
+    );
+    assert_eq!(
+        switching_stages
+            .reconstruction_output
+            .head_switching_band_lines,
         12.0
     );
-    assert!((switching_stages.reconstruction_output.head_switching_offset_px - 27.0).abs() < 1e-6);
+    assert!(
+        (switching_stages
+            .reconstruction_output
+            .head_switching_offset_px
+            - 27.0)
+            .abs()
+            < 1e-6
+    );
     assert_ne!(
         effect_uniforms(&input, &base_pipeline),
         effect_uniforms(&input, &switching_pipeline)

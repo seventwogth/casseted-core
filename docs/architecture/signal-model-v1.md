@@ -375,6 +375,21 @@ Scene-level calibration notes for the current limited multi-pass path:
 - neutral surfaces should pick up faint line/band contamination before they read as a uniform grain overlay
 - skin and portrait areas should look softer and dirtier, not decoratively torn apart
 
+Current still-image baseline assessment after the whole-chain calibration pass:
+
+- strongest current behavior:
+  highlight handling, luma structure softening, and chroma bandwidth loss now read as one coherent foundation instead of as disconnected local effects
+- strongest representative classes:
+  bright highlights and colored-edge / colored-shape scenes
+- weakest representative classes:
+  neutral / low-saturation scenes and high-frequency UI-like detail
+- key systematic observation:
+  the chain is no longer being pulled off course by one over-strong stage; the remaining gap is that quiet scenes still carry slightly too little low-amplitude reconstruction character, so they can look more proxy-like than analog-worn
+- next highest-value milestone recommendation:
+  keep the architecture fixed and run one compact reconstruction-side calibration milestone aimed at quiet-content character on neutral surfaces, skin-like midtones, and UI/text detail
+- reserve milestone recommendation:
+  if that pass is deferred, the next-best targeted gain is tighter chroma-vs-luma calibration for very small high-frequency colored accents, where the current path can still leave chroma a bit too intact relative to the softened luma base
+
 ## Implementation Status
 
 The current repository now implements a reference-consistent subset of v1 as five logical stages executed through four WGSL passes:
