@@ -20,6 +20,10 @@ They are reference targets that help us judge whether the current still-image ch
 Stage-level regression in code stays synthetic and deterministic through the in-memory reference card used by `casseted-pipeline`.
 This directory is the real-world look corpus.
 
+Current note:
+the quiet-content reconstruction calibration milestone is explicitly reference-driven.
+Its primary engineering buckets are `04_portrait-skin`, `05_ui-text-detail`, `06_neutral-interior`, and `08_dark-screen-noise`; the other buckets remain cross-checks for hierarchy and regression restraint.
+
 ## Current Buckets
 
 | Bucket | Purpose | Primary visual aspects | Most relevant stages |
@@ -43,6 +47,8 @@ This directory is the real-world look corpus.
 - Neutral interior / ordinary objects: `06_neutral-interior`, with `01_target-look/wall.png` as a lower-drama holistic check
 - Low-detail silhouettes / large gradients: `07_silhouette-low-detail`
 - Dark scenes / low-light noise visibility: `08_dark-screen-noise`
+- Quiet-content reconstruction calibration:
+  use `04_portrait-skin`, `05_ui-text-detail`, `06_neutral-interior`, and `08_dark-screen-noise` as the primary buckets when judging whether calm surfaces pick up plausible low-amplitude analog character without turning into a dirt effect
 
 That split is intentional:
 
@@ -53,5 +59,6 @@ That split is intentional:
 
 - Use `01_target-look` first when judging whether a change improves or hurts the baseline as a whole.
 - Use the narrower buckets next when the question is class-specific, such as highlights, text detail, or quiet dark scenes.
+- For quiet-content work, write down which of `04`, `05`, `06`, and `08` were primary and which of `01`, `02`, `03`, or `07` were only cross-checks.
 - Prefer documenting which buckets informed a conclusion instead of writing generic visual opinions.
 - If a future change adds or removes bucket directories, update this README in the same milestone.

@@ -67,7 +67,7 @@ Toolchain note:
 - the canonical workspace toolchain is now pinned to Rust `1.88.0` in `rust-toolchain.toml`
 - workspace verification commands are expected to run with `Cargo.lock` via `--locked`
 
-Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softness, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch now expresses bandwidth loss as horizontal low-pass filtering plus cell-integrated coarse chroma reconstruction, a restrained trailing contamination tail, and a direct but restrained chroma-phase bias at the handoff to reconstruction, with extra smear held back on strong luma edges so color stays subordinate to structure. The luma branch continues to use a broader low-pass foundation with separate fine-detail and mid-band attenuation so the image loses crisp digital sharpness without collapsing into plain blur. Bright contours also pick up a small asymmetric lag/bleed bias from preceding samples, so they spread as part of signal loss instead of as post-process bloom. The final pass now makes its own sequence explicit too: it first applies a restrained lower-band head-switching approximation, then conditions the branch outputs through restrained dropout concealment, then applies `Y/C`-space contamination and low-band chroma phase noise, then decodes through a small residual leakage term. That explicit decode path currently stops at clamped RGB numerics written directly to the final `RGBA8` image; `output_transfer` is still deferred, so there is no extra post-decode display/output shaper. That keeps the new transport-side disturbance localized to the lower switching band, keeps luma contamination brightness-shaped and mildly line/band-correlated, keeps chroma contamination broader and softer than luma, and turns chroma-phase instability into a restrained chroma-vector perturbation instead of an RGB-split decoration. Jitter, lower-band switching disturbance, crosstalk, refined contamination, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
+Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softness, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch now expresses bandwidth loss as horizontal low-pass filtering plus cell-integrated coarse chroma reconstruction, a restrained trailing contamination tail, and a direct but restrained chroma-phase bias at the handoff to reconstruction, with extra smear held back on strong luma edges so color stays subordinate to structure. The luma branch continues to use a broader low-pass foundation with separate fine-detail and mid-band attenuation so the image loses crisp digital sharpness without collapsing into plain blur. Bright contours also pick up a small asymmetric lag/bleed bias from preceding samples, so they spread as part of signal loss instead of as post-process bloom. The final pass now makes its own sequence explicit too: it first applies a restrained lower-band head-switching approximation, then conditions the branch outputs through restrained dropout concealment, then applies `Y/C`-space contamination and low-band chroma phase noise, then decodes through a small residual leakage term. The latest quiet-content calibration keeps that same pass boundary but adds a local quiet-region profile inside the final pass, so calm surfaces and dark floors receive a slightly more convincing line/band-carried analog carrier instead of being left too digitally pristine between stronger artifacts. That explicit decode path still stops at clamped RGB numerics written directly to the final `RGBA8` image; `output_transfer` remains deferred, so there is no extra post-decode display/output shaper. The result is intentionally subtle: luma contamination stays brightness-shaped and mildly line/band-correlated, chroma contamination stays broader and softer than luma, chroma-phase instability remains a restrained chroma-vector perturbation instead of an RGB-split decoration, and quiet-scene character gets less sterile without turning into a grain overlay or dirt showcase.
 
 The current verification foundation mirrors that structure:
 
@@ -79,7 +79,8 @@ The current verification foundation mirrors that structure:
   portrait-like midtones,
   bright highlights,
   neutral / low-saturation scenes,
-  and high-frequency UI-like detail
+  high-frequency UI-like detail,
+  and a dark quiet-floor case
 - the compiled runtime path is checked against the direct GPU path on both the synthetic calibration cases and the bucketized reference corpus, so runtime reuse stays aligned with the baseline review inputs
 - the reference buckets themselves now anchor the qualitative baseline review:
   `01_target-look` for whole-chain hierarchy,
@@ -100,11 +101,11 @@ Still-image baseline assessment after that calibration pass:
 - strongest image classes:
   bright highlights and colored-shape scenes, where tone rolloff, highlight spread, and chroma softening stay subordinate and coherent
 - weakest image classes:
-  neutral / low-saturation scenes and UI-like high-frequency detail, where the default path can still read slightly too clean or too proxy-like because low-amplitude reconstruction character remains very restrained
+  very small colored high-frequency accents and some tiny chroma-vs-luma edge balances, especially where `05_ui-text-detail` and `03_color-edges-chroma` overlap
 - systematic balance:
-  the current chain does not look dominated by one runaway refinement milestone; the remaining imbalance is mostly that quiet-scene reconstruction character is conservative, not that final-stage effects are too strong
+  the current chain still does not look dominated by one runaway refinement milestone; quiet-scene reconstruction is now less sterile on the primary reference buckets, while the next imbalance is narrower and more edge-specific
 - highest-value next milestone:
-  a compact reconstruction-side calibration pass for quiet content, focused on neutral surfaces, skin-like midtones, and UI/text detail rather than on adding a new artifact family
+  a narrow chroma-vs-luma calibration pass for very small colored accents and UI-adjacent color detail, using `03_color-edges-chroma` plus `05_ui-text-detail` as the primary engineering buckets
 
 Reference documents:
 

@@ -350,6 +350,14 @@ Current preview guardrails for manual / override-driven `SignalSettings`:
 - in model-backed pipelines, those guardrails now preserve untouched projected preview terms instead of re-normalizing the entire preview signal blob
 - these rules are intentionally preview-only and do not redefine the formal model
 
+Reference-driven quiet-content note:
+the latest reconstruction-side calibration milestone was anchored primarily to
+`04_portrait-skin`,
+`05_ui-text-detail`,
+`06_neutral-interior`,
+and `08_dark-screen-noise`.
+Those buckets were treated as the main engineering references for low-amplitude reconstruction character; `01_target-look`, `02_highlights-specular`, `03_color-edges-chroma`, and `07_silhouette-low-detail` remained cross-checks for hierarchy restraint.
+
 ## Current Visual Calibration Priorities
 
 The current limited multi-pass still-image implementation is intentionally not balanced equally across all formal stages. For the current phase, the visual priority is:
@@ -377,21 +385,22 @@ Scene-level calibration notes for the current limited multi-pass path:
 - dark scenes should keep noise and dropout subordinate to tone and bandwidth loss
 - neutral surfaces should pick up faint line/band contamination before they read as a uniform grain overlay
 - skin and portrait areas should look softer and dirtier, not decoratively torn apart
+- quiet low-detail regions should now pick up a slightly more convincing reconstruction carrier through restrained line/band contamination that is profiled from local `Y/C` calmness rather than from a global “more noise” push
 
 Current still-image baseline assessment after the whole-chain calibration pass:
 
 - strongest current behavior:
   highlight handling, luma structure softening, and chroma bandwidth loss now read as one coherent foundation instead of as disconnected local effects
 - strongest representative classes:
-  bright highlights and colored-edge / colored-shape scenes
+  bright highlights, colored-edge / colored-shape scenes, and now the calmer parts of `06_neutral-interior` / `08_dark-screen-noise` that previously read too proxy-like
 - weakest representative classes:
-  neutral / low-saturation scenes and high-frequency UI-like detail
+  very small colored high-frequency accents and the finest chroma-vs-luma edge balance inside `05_ui-text-detail`
 - key systematic observation:
-  the chain is no longer being pulled off course by one over-strong stage; the remaining gap is that quiet scenes still carry slightly too little low-amplitude reconstruction character, so they can look more proxy-like than analog-worn
+  the chain is still not being pulled off course by one over-strong stage; the quiet-scene reconstruction gap is narrower now because the final pass no longer leaves calm surfaces quite so untouched between stronger artifacts
 - next highest-value milestone recommendation:
-  keep the architecture fixed and run one compact reconstruction-side calibration milestone aimed at quiet-content character on neutral surfaces, skin-like midtones, and UI/text detail
+  keep the architecture fixed and run one narrow chroma-vs-luma balance pass for very small colored accents, using `03_color-edges-chroma` and `05_ui-text-detail` as the main reference buckets
 - reserve milestone recommendation:
-  if that pass is deferred, the next-best targeted gain is tighter chroma-vs-luma calibration for very small high-frequency colored accents, where the current path can still leave chroma a bit too intact relative to the softened luma base
+  if that pass is deferred, the next-best targeted gain is still later decode/output boundary work, but only when `output_transfer` can be introduced as a real semantic stage rather than as a standalone look toggle
 
 ## Implementation Status
 
@@ -400,7 +409,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - input conditioning / tone shaping plus `RGB -> YUV` fan-out into a working-signal texture
 - luma two-scale low-pass/detail attenuation biased toward microcontrast loss, with restrained bright-edge lag and highlight bleed embedded in the same branch
 - chroma delay plus low-pass/cell-integrated reconstruction/contamination degradation biased toward bandwidth loss over misregistration, now with a restrained deterministic chroma-phase bias applied at the chroma/reconstruction boundary
-- reconstruction back to RGB from a head-switching-conditioned, dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, restrained line-segment dropout handling, restrained local chroma-phase noise, and restrained Y/C leakage that now backs off slightly inside active transport/dropout disturbance
+- reconstruction back to RGB from a head-switching-conditioned, dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, a local quiet-region profile that slightly boosts line/band-carried low-amplitude character on calm surfaces and dark floors, restrained line-segment dropout handling, restrained local chroma-phase noise, and restrained Y/C leakage that now backs off slightly inside active transport/dropout disturbance
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for transport-adjacent reconstruction disturbance and noise/dropout placement; it does not reapply full-frame transport resampling to luma/chroma textures
 
