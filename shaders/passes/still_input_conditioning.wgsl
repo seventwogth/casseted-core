@@ -16,6 +16,10 @@ struct VsOutput {
 @group(0) @binding(1) var input_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
 
+// `VhsInputSettings.matrix` is currently fixed-active only as the BT.601-like
+// working transform below. Input transfer and temporal selectors remain
+// deferred, so this pass still assumes gamma-coded `sRGB` and progressive
+// still-frame semantics.
 const BT601_LUMA: vec3<f32> = vec3<f32>(0.299, 0.587, 0.114);
 
 fn rgb_to_yuv(rgb: vec3<f32>) -> vec3<f32> {

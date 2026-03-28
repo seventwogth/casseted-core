@@ -33,7 +33,7 @@ The key point in the current phase is that the still-image path is now explicit 
 - the working GPU path groups them into five implementation stages and executes them as a compact four-pass runtime without a render graph
 - the compiled runtime layer owns reusable GPU execution state for that fixed pass chain, while `StillImagePipeline` remains only the high-level description of the still-image effect
 
-The field-level boundary is now explicit too: [`signal-model-v1-subset.md`](./signal-model-v1-subset.md) records which formal v1 fields are fully active, which are active only through the current projection/approximation layer, and which are still deliberately deferred.
+The field-level boundary is now explicit too: [`signal-model-v1-subset.md`](./signal-model-v1-subset.md) records which formal v1 fields are fully active, which are active only through the current projection/approximation layer, and which are still deliberately deferred. On the input side that boundary is intentionally narrow: the still runtime already uses one fixed BT.601-like working matrix, while `VhsInputSettings.transfer` and `VhsInputSettings.temporal_sampling` remain deferred selectors.
 
 Why this degree of decomposition was chosen:
 

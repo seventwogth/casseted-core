@@ -27,7 +27,7 @@ For the field-level split between active, approximated, and deferred formal term
 
 The implemented still-image subset is:
 
-1. input conditioning / tone shaping: gamma-coded `sRGB` input assumptions, still-frame transport offset, and luma-preserving soft-knee highlight compression
+1. input conditioning / tone shaping: gamma-coded `sRGB` input assumptions, a fixed BT.601-like working matrix, still-frame transport offset, and luma-preserving soft-knee highlight compression
 2. `RGB -> YUV` decomposition
 3. luma low-pass/detail attenuation plus restrained highlight bleed
 4. chroma horizontal delay + band-limited, cell-integrated chroma reconstruction + optional vertical line blend
@@ -190,7 +190,7 @@ Engineering approximation:
 `sRGB` input is accepted directly and converted to a BT.601-like working representation in shader code.
 
 Activation note:
-the stage is active under the fixed `sRGB` + BT.601-like + progressive still-frame assumptions above, but changing `VhsInputSettings` does not yet change the runtime path.
+the stage is active under the fixed `sRGB` + BT.601-like + progressive still-frame assumptions above. The matrix assumption now matches the only current `VideoMatrix` formal choice, while changing `VhsInputSettings.transfer` or `VhsInputSettings.temporal_sampling` still does not change the runtime path.
 
 Pipeline mapping:
 executed in `shaders/passes/still_input_conditioning.wgsl`, which writes the working YUV texture used by the later luma/chroma passes.
@@ -1134,7 +1134,7 @@ Fully active:
 
 Partially active / approximated:
 
-- fixed `sRGB` + BT.601-like + progressive input assumptions at the stage level, without field-driven `VhsInputSettings` switching yet
+- fixed `sRGB` + BT.601-like + progressive input assumptions at the stage level, with the matrix assumption fixed-active and only `transfer` / `temporal_sampling` still deferred as selectors
 - `VhsLumaSettings.{bandwidth_mhz,preemphasis_db}` through the compact luma bandwidth/detail approximation
 - `VhsChromaSettings.{delay_us,bandwidth_khz,phase_error_deg}` through the compact chroma offset/bandwidth-loss approximation plus a direct chroma-vector phase rotation at the chroma/reconstruction boundary
 - `VhsTransportSettings.{line_jitter_us,vertical_wander_lines,head_switching_band_lines,head_switching_offset_us}` through the still-frame spatial transport subset, with `head_switching_*` implemented as a restrained lower-band reconstruction-side approximation
@@ -1146,9 +1146,13 @@ Partially active / approximated:
 
 Documented here but not implemented yet:
 
-- `VhsInputSettings.{matrix,transfer,temporal_sampling}` as runtime selectors
+- `VhsInputSettings.{transfer,temporal_sampling}` as runtime selectors
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
+
+`VhsInputSettings.matrix` now sits on a narrower boundary than the other input fields:
+the formal surface currently exposes only `VideoMatrix::Bt601`, and the active WGSL path already hardcodes the matching BT.601-like working transform.
+That makes the matrix assumption fixed-active rather than selector-driven, while still keeping broader matrix selection outside the current still-image subset.
 
 ## 7. Projection Rules Used By The Current Still Pipeline
 

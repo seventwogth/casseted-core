@@ -123,7 +123,8 @@ Purpose:
 define the input transfer and matrix assumptions explicitly.
 
 Current v1 assumption:
-gamma-coded `sRGB` input interpreted with a BT.601-like luma/chroma matrix.
+gamma-coded `sRGB` input interpreted with a BT.601-like luma/chroma matrix and progressive still-frame semantics.
+The matrix assumption now matches the only current `VideoMatrix` formal choice; `VhsInputSettings.transfer` and `VhsInputSettings.temporal_sampling` remain deferred selectors.
 
 ### 2. ToneShaping
 
@@ -246,7 +247,7 @@ The field-level map between formal signal-model v1 and the current still-image r
 Important distinction:
 
 - a formal stage can be active while some fields in its owning group are still deferred
-- `InputDecode` is the clearest example: the still path already assumes gamma-coded `sRGB`, a BT.601-like matrix, and progressive still-frame semantics, but `VhsInputSettings` are not yet runtime selectors
+- `InputDecode` is the clearest example: the still path already assumes gamma-coded `sRGB`, a BT.601-like matrix, and progressive still-frame semantics, but only the fixed matrix assumption is active today; `transfer` and `temporal_sampling` are not yet runtime selectors
 - some formal fields are now active without joining the preview control surface:
   the chroma-phase and head-switching terms bypass `SignalSettings` and resolve directly as model-only stage auxiliaries
 - transport, noise, and dropout are active only through the current still-frame spatial subset and the compact reconstruction approximation
@@ -326,9 +327,13 @@ Secondary mappings that are still present but not the main focus of this phase:
 
 Formal fields intentionally not projected into the current still runtime subset:
 
-- `VhsInputSettings.*`
+- `VhsInputSettings.{transfer,temporal_sampling}`
 - `VhsDecodeSettings.output_transfer`
 - `VhsModel.standard` once concrete preset values are already carried by the rest of the model
+
+`VhsInputSettings.matrix` now sits on a narrower boundary:
+the formal surface currently exposes only `VideoMatrix::Bt601`, and the still-image WGSL path hardcodes the matching BT.601-like working transform.
+That makes the matrix assumption fixed-active rather than selector-driven, while still avoiding any broader matrix-management layer.
 
 For `VhsDecodeSettings.output_transfer`, the current fixed runtime assumption is narrower than a real output pipeline:
 the final shader decodes to clamped RGB and the runtime stores those numerics directly in `RGBA8`, so the field remains deferred until a later decode/output milestone justifies an explicit post-decode output semantic boundary.
@@ -383,7 +388,7 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 
 Still deferred:
 
-- input-selector-driven runtime branching from `VhsInputSettings`
+- input-selector-driven runtime branching from `VhsInputSettings.{transfer,temporal_sampling}`
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - temporal model
 - render-graph planning
@@ -398,7 +403,8 @@ The next step is to extend this signal-model-aligned subset deliberately, not to
 
 The most justified next implementation moves are:
 
-- decide later whether `VhsInputSettings.*` should become runtime selectors inside still-image v1 without widening the architecture unnecessarily
+- decide later whether `VhsInputSettings.{transfer,temporal_sampling}` should become runtime selectors inside still-image v1 without widening the architecture unnecessarily
+- keep `VhsInputSettings.matrix` fixed to the current BT.601-like working transform unless and until the formal surface actually grows another justified matrix choice
 - keep `VhsDecodeSettings.output_transfer` deferred until a broader decode/output milestone can introduce an explicit post-decode output semantic boundary instead of a standalone look toggle
 - keep any future transport work subordinate to the current tone/luma/chroma foundation instead of escalating into a temporal or deck-accurate switching model too early
 

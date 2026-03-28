@@ -39,6 +39,7 @@ Those five stages are now executed as a limited four-pass runtime.
 
 Important detail:
 the formal transport stage still exists canonically in `casseted-signal`, but the current still path only implements its spatial still-frame subset, so it remains fused into the first pass instead of becoming a standalone transport pass.
+The same first-pass boundary is now explicit on the input side too: the WGSL path already commits to one fixed BT.601-like working matrix, while `VhsInputSettings.transfer` and `VhsInputSettings.temporal_sampling` remain deferred and do not widen the pass contract yet.
 The same compactness applies at the output edge too: the current final pass stops at decoded/clamped RGB written into `RGBA8`, while `VhsDecodeSettings.output_transfer` stays deferred until a later decode/output milestone can justify a real post-decode semantic boundary.
 
 ## Projection layer
@@ -140,6 +141,7 @@ The following are still deferred:
 - render-graph planning
 - dedicated dropout-only masking passes
 - advanced head-switching timing / deck-geometry behavior
+- explicit runtime selectors for `VhsInputSettings.{transfer,temporal_sampling}`
 - explicit post-decode `output_transfer` activation
 - video and temporal state
 - texture pooling and broader readback reuse
