@@ -7,7 +7,7 @@ The repository currently provides a compact still-image v1 foundation:
 - a Cargo workspace with small, focused crates
 - a shared shader directory for WGSL sources
 - architecture, formulas, testing, and stage-log docs for the current signal-model-aligned path
-- committed reference-image fixtures for the still-image pipeline
+- a bucketized reference-image corpus for still-image calibration plus synthetic stage-regression inputs in code
 - a small GPU-independent domain model for frame metadata, current still-preview controls, and the formal VHS / analog v1 parameter model
 - a still-image GPU pipeline that implements a model-aligned subset of signal-model v1 through five logical stages on a compact four-pass runtime
 - a CLI utility for running one PNG image through that pipeline
@@ -22,7 +22,7 @@ At this stage the project does not implement video support, a multi-pass render 
 - `casseted-gpu`: thin headless `wgpu` runtime setup and shader-module helpers
 - `casseted-pipeline`: current still-image processing pipeline plus the compiled runtime reuse layer for the fixed pass chain
 - `casseted-cli`: local PNG-to-PNG CLI utility for developer-facing pipeline checks
-- `casseted-testing`: shared helpers for test images, stage reference fixtures, image diffs, and basic assertions
+- `casseted-testing`: shared helpers for deterministic test images, PNG loading, image diffs, and basic assertions
 
 The main layer boundary is intentionally simple:
 
@@ -36,7 +36,10 @@ The main layer boundary is intentionally simple:
 .
 |-- assets/
 |   `-- reference-images/
-|       `-- still-pipeline-v1/
+|       |-- 01_target-look/
+|       |-- 02_highlights-specular/
+|       |-- ...
+|       `-- README.md
 |-- crates/
 |   |-- casseted-cli/
 |   |-- casseted-gpu/
@@ -58,7 +61,7 @@ The main layer boundary is intentionally simple:
 
 ## Current status
 
-The workspace now acts as a compact still-image v1 signal-model implementation: it contains one real still-image GPU path, one working CLI, committed stage-oriented reference fixtures, and documentation that ties the implementation to the formal v1 model.
+The workspace now acts as a compact still-image v1 signal-model implementation: it contains one real still-image GPU path, one working CLI, a bucketized calibration corpus in `assets/reference-images/`, synthetic stage-regression coverage in code, and documentation that ties the implementation to the formal v1 model.
 
 The current still-image path is deliberately compact:
 
@@ -78,10 +81,21 @@ Current visual priority remains intentionally signal-first rather than glitch-fi
 
 Current still-image baseline assessment after the first whole-chain calibration pass:
 
-- strongest foundation: input conditioning, luma degradation, and the core chroma bandwidth-loss path now read coherently across the committed stage fixtures and the synthetic calibration cases
+- strongest foundation: input conditioning, luma degradation, and the core chroma bandwidth-loss path now read coherently across the bucketized reference corpus and the synthetic calibration cases
 - strongest content classes: bright highlights and colored-shape scenes, where the current path keeps tone/luma/chroma hierarchy intact and avoids decorative RGB-split behavior
 - weakest content classes: neutral / low-saturation scenes and high-frequency UI-like detail, which can still read a little too clean or too proxy-like because the current default reconstruction character stays very restrained
 - no stage currently looks runaway or architecture-breaking; the remaining gap is underpowered low-amplitude reconstruction character on quiet content, not an over-strong secondary artifact stage
+
+Reference-bucket usage in that review:
+
+- `01_target-look`: overall visual hierarchy and whole-chain coherence
+- `02_highlights-specular`: highlight shoulder and bright-edge spread
+- `03_color-edges-chroma`: colored edges / chroma hierarchy
+- `04_portrait-skin`: skin-like midtones and portrait cohesion
+- `05_ui-text-detail`: text / UI-like high-frequency detail
+- `06_neutral-interior`: ordinary neutral scenes and low-drama surfaces
+- `07_silhouette-low-detail`: silhouettes and large gradients
+- `08_dark-screen-noise`: dark-scene noise visibility and restraint
 
 The current implementation path is anchored by:
 
@@ -154,14 +168,13 @@ Current testing is intentionally lightweight:
 - unit tests for domain and support crates
 - GPU smoke tests for the still-image pipeline
 - a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
-- committed stage-oriented PNG fixtures for the current limited multi-pass still path in `assets/reference-images/still-pipeline-v1/`
-- stage regression coverage for resolved defaults, bounded perturbations, and reference PNG comparisons when a GPU adapter is available
+- synthetic stage regression coverage for resolved defaults and bounded perturbations on a deterministic in-memory reference card
 - synthetic calibration coverage for representative still-image classes:
   colored edges,
   portrait-like midtones,
   bright highlights,
   neutral / low-saturation scenes,
   and UI-like detail
-- parity checks that the compiled runtime path matches the direct GPU path across that small calibration set
+- corpus-backed sanity checks over `assets/reference-images/` so the bucket structure, PNG loading, processed output, and compiled-runtime parity all stay covered
+- parity checks that the compiled runtime path matches the direct GPU path across both the synthetic calibration set and the reference-image corpus
 - shared helpers in [`docs/testing.md`](./docs/testing.md)
-2026

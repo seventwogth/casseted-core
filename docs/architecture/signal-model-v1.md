@@ -99,21 +99,24 @@ Why this grouping is used now:
 
 ## Visual Regression Mapping
 
-The current visual regression foundation keeps one committed source image plus one committed output PNG per implementation stage in `assets/reference-images/still-pipeline-v1/`.
+The current regression foundation is split in two:
 
-| Implementation stage | Formulas reference | Uniform focus | WGSL entry points | Reference PNG |
+- a deterministic in-memory reference card used by `StageReferenceCase` tests for resolved defaults and bounded stage perturbations
+- the bucketized real-world look corpus in `assets/reference-images/`, used for whole-chain calibration review and corpus-backed runtime-parity sanity checks
+
+| Implementation stage | Formulas reference | Uniform focus | WGSL entry points | Current regression anchor |
 | --- | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `conditioned_sample_uv()`, `apply_tone_shaping()` | `input-conditioning-tone.png` |
-| Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the working-signal fan-out path | `rgb_to_yuv()` in `still_input_conditioning.wgsl` | `luma-chroma-transform.png` |
-| Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()`, `highlight_bleed()` | `luma-degradation.png` |
-| Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | `chroma-degradation.png` |
-| Reconstruction / output | `4.5` plus notes in `5.2`, `5.3`, and `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `apply_head_switching_approximation()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | `reconstruction-output.png` |
+| Input conditioning / tone shaping | `4.1` plus transport note in `5.1` | `effect.input_conditioning` | `conditioned_sample_uv()`, `apply_tone_shaping()` | synthetic reference card stage case plus `02_highlights-specular` / `04_portrait-skin` for qualitative review |
+| Luma/chroma transform | `4.2` | no stage-specific uniform group; verified as the neutral transform case for the working-signal fan-out path | `rgb_to_yuv()` in `still_input_conditioning.wgsl` | synthetic reference card stage case |
+| Luma degradation | `4.3` | `effect.luma_degradation` | `degrade_luma()`, `highlight_bleed()` | synthetic reference card stage case plus `02_highlights-specular`, `05_ui-text-detail`, and `07_silhouette-low-detail` |
+| Chroma degradation | `4.4` | `effect.chroma_degradation` | `degrade_chroma()` | synthetic reference card stage case plus `03_color-edges-chroma`, `04_portrait-skin`, and `05_ui-text-detail` |
+| Reconstruction / output | `4.5` plus notes in `5.2`, `5.3`, and `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `apply_head_switching_approximation()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | synthetic reference card stage case plus `06_neutral-interior` and `08_dark-screen-noise` |
 
-Current fixture policy:
+Current policy:
 
-- reference comparisons use fixed tolerances for the compact multi-pass outputs
-- stage tests also verify resolved defaults and bounded output changes under small parameter perturbations
-- fixtures remain stage-oriented end-to-end outputs; they do not introduce a separate intermediate-texture review tool at this phase
+- stage-level tests stay deterministic and synthetic
+- whole-chain calibration uses the bucketized reference corpus documented in [`../../assets/reference-images/README.md`](../../assets/reference-images/README.md)
+- the current corpus is a look target, not a clean-input / golden-output fixture set
 
 ## Stage Intent
 

@@ -71,16 +71,25 @@ Within that compact multi-pass path, the current visual calibration still intent
 
 The current verification foundation mirrors that structure:
 
-- committed PNG fixtures live in `assets/reference-images/still-pipeline-v1/`
-- `casseted-pipeline` runs stage-oriented reference tests against those fixtures with fixed tolerances
-- `casseted-testing` provides the deterministic source card, PNG helpers, and image-difference assertions
+- `assets/reference-images/` now acts as a bucketized still-image calibration corpus instead of as a stage-fixture directory
+- `casseted-pipeline` keeps stage-oriented regression synthetic and deterministic through an in-memory reference card used for resolved-default and perturbation checks
+- `casseted-testing` provides the reference card, PNG helpers, and image-difference assertions
 - `casseted-pipeline` also now runs a small synthetic calibration set for representative still-image classes:
   colored edges / shapes,
   portrait-like midtones,
   bright highlights,
   neutral / low-saturation scenes,
   and high-frequency UI-like detail
-- the compiled runtime path is checked against the direct GPU path on those same calibration cases, so runtime reuse stays aligned with the baseline review inputs
+- the compiled runtime path is checked against the direct GPU path on both the synthetic calibration cases and the bucketized reference corpus, so runtime reuse stays aligned with the baseline review inputs
+- the reference buckets themselves now anchor the qualitative baseline review:
+  `01_target-look` for whole-chain hierarchy,
+  `02_highlights-specular` for highlight behavior,
+  `03_color-edges-chroma` for chroma hierarchy,
+  `04_portrait-skin` for portrait midtones,
+  `05_ui-text-detail` for high-frequency detail,
+  `06_neutral-interior` for ordinary quiet scenes,
+  `07_silhouette-low-detail` for silhouettes / gradients,
+  and `08_dark-screen-noise` for dark-scene noise visibility
 
 Still-image baseline assessment after that calibration pass:
 

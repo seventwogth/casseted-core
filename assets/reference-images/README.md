@@ -1,19 +1,57 @@
 # Reference Images
 
-This directory stores committed PNG fixtures used for still-image visual regression and parameter-verification tests.
+This directory is the still-image visual calibration corpus for the current `casseted-core` baseline.
 
-Current committed set:
+It is used for:
 
-- `still-pipeline-v1/reference-card-96x64.png`: deterministic source card used as the shared still-image input
-- `still-pipeline-v1/*.png`: one reference output per current single-pass implementation stage
+- whole-chain baseline review of the current still-image signal path
+- qualitative comparison against real-world VHS-like reference behavior
+- documentation and agent notes about current strengths, weaknesses, and next milestones
+- lightweight corpus-backed sanity checks that the default pipeline still renders and that the compiled runtime stays aligned with the direct GPU path
 
-The current stage fixtures are documented in:
+Important distinction:
 
-- `assets/reference-images/still-pipeline-v1/README.md`
-- `docs/math/signal-model-v1-formulas.md`
+- `01_target-look/` contains holistic target-look references
+- `02_` through `08_` are narrower calibration buckets
 
-To regenerate the committed stage PNGs:
+These images are not clean-source / golden-output pairs for one-to-one image matching.
+They are reference targets that help us judge whether the current still-image chain is converging on the right visual hierarchy and failure modes.
 
-```bash
-cargo test -p casseted-pipeline bless_stage_reference_images -- --ignored
-```
+Stage-level regression in code stays synthetic and deterministic through the in-memory reference card used by `casseted-pipeline`.
+This directory is the real-world look corpus.
+
+## Current Buckets
+
+| Bucket | Purpose | Primary visual aspects | Most relevant stages |
+| --- | --- | --- | --- |
+| `01_target-look` | Holistic target references for the current still-image baseline | overall analog character, visual hierarchy, cross-stage balance, whether the image feels signal-first instead of effect-first | full chain |
+| `02_highlights-specular` | Bright highlight and specular references | highlight shoulder, bright-edge spread, whether highlight response stays luma-led, whether final contamination stays subordinate | input conditioning, luma degradation, highlight bleed, reconstruction/output |
+| `03_color-edges-chroma` | Chroma-heavy edges, colored shapes, and UI-adjacent color boundaries | chroma bandwidth loss, chroma-vs-luma hierarchy, misregistration restraint, whether color breakup reads like bandwidth loss instead of RGB-split decoration | chroma degradation, luma degradation, reconstruction/output |
+| `04_portrait-skin` | Portrait and skin-like midtone references | midtone cohesion, skin saturation restraint, whether portrait structure stays ahead of chroma breakup, whether quiet analog character is present without looking dirty-for-its-own-sake | input conditioning, luma degradation, chroma degradation, reconstruction/output |
+| `05_ui-text-detail` | Text, diagrams, and UI-like high-frequency detail | luma edge retention, text softness, small colored-accent handling, whether the result stays analog-soft instead of mushy or too digitally clean | luma degradation, chroma degradation, preview guardrails, reconstruction/output |
+| `06_neutral-interior` | Everyday low-drama interior scenes and ordinary objects | neutral-surface character, low-saturation behavior, baseline contamination/noise restraint, whether quiet scenes still feel analog rather than proxy-like | luma degradation, noise, reconstruction/output |
+| `07_silhouette-low-detail` | Large shapes, silhouettes, and low-detail gradients | gradient smoothness, silhouette readability, whether secondary artifacts stay subordinate to tone/luma foundation | input conditioning, luma degradation, reconstruction/output |
+| `08_dark-screen-noise` | Dark scenes and low-light displays | dark-scene noise floor, chroma noise visibility, dropout/head-switching restraint, whether dark content stays credible instead of collapsing into a generic overlay | noise, dropout, reconstruction/output |
+
+## How The Current Baseline Review Uses The Buckets
+
+- Overall target-look sanity: `01_target-look`
+- Bright highlights / speculars: `02_highlights-specular`
+- Colored edges / colored shapes: `03_color-edges-chroma`
+- Portrait / skin-like midtones: `04_portrait-skin`, with `02_highlights-specular/portrait.png` as a bright-portrait cross-check
+- High-frequency detail / text / UI-like edges: `05_ui-text-detail`, with `03_color-edges-chroma/interface.png` as the colored-edge cross-check
+- Neutral interior / ordinary objects: `06_neutral-interior`, with `01_target-look/wall.png` as a lower-drama holistic check
+- Low-detail silhouettes / large gradients: `07_silhouette-low-detail`
+- Dark scenes / low-light noise visibility: `08_dark-screen-noise`
+
+That split is intentional:
+
+- `01_target-look` tells us whether the chain reads coherently as a system
+- `02` through `08` tell us which content classes are currently strongest or weakest
+
+## Practical Guidance
+
+- Use `01_target-look` first when judging whether a change improves or hurts the baseline as a whole.
+- Use the narrower buckets next when the question is class-specific, such as highlights, text detail, or quiet dark scenes.
+- Prefer documenting which buckets informed a conclusion instead of writing generic visual opinions.
+- If a future change adds or removes bucket directories, update this README in the same milestone.

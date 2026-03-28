@@ -48,27 +48,37 @@ The current implementation keeps those stages in a compact four-pass runtime and
 | `still_chroma_degradation` | chroma degradation | `resolve_chroma_degradation_stage()`, `degrade_chroma()` | one chroma branch pass |
 | `still_reconstruction_output` | reconstruction / output | `resolve_reconstruction_output_stage()`, `apply_head_switching_approximation()`, `apply_dropout_approximation()`, `sample_reconstruction_contamination()`, `compose_display_yuv()`, `decode_output_rgb()` | one final output pass |
 
-### Current Visual Regression Fixtures
+### Current Regression Inputs And Calibration Corpus
 
-Committed fixtures now live in `assets/reference-images/still-pipeline-v1/`.
+The repository now uses two complementary inputs for still-image baseline verification:
 
-| Stage case | Reference PNG | Formulas section | Primary uniform focus | Default resolved values used by the fixture |
+- a deterministic in-memory reference card (`reference_card_rgba8_image(96x64)`) for stage-oriented default and perturbation tests
+- the bucketized real-world look corpus in `assets/reference-images/` for whole-chain calibration review and corpus-backed runtime-parity checks
+
+Current stage-oriented synthetic cases:
+
+| Stage case | Regression input | Formulas section | Primary uniform focus | Default resolved values under test |
 | --- | --- | --- | --- | --- |
-| Input conditioning / tone shaping | `input-conditioning-tone.png` | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.64`, `rho_h = 0.62`, `p_J = 0.35 * s_ref`, `delta_V = 0.25` |
-| Luma/chroma transform | `luma-chroma-transform.png` | `4.2` | none beyond the shared frame block; this is the neutral transform fixture for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
-| Luma degradation | `luma-degradation.png` | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363`; the shader derives low/mid/fine-band luma attenuation from that compact state |
-| Chroma degradation | `chroma-degradation.png` | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
-| Reconstruction / output | `reconstruction-output.png` | `4.5`, `5.2`, `5.3`, `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `b_S = 0`, `r_S = 0`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
+| Input conditioning / tone shaping | deterministic in-memory reference card | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.64`, `rho_h = 0.62`, `p_J = 0.35 * s_ref`, `delta_V = 0.25` |
+| Luma/chroma transform | deterministic in-memory reference card | `4.2` | none beyond the shared frame block; this is the neutral transform case for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
+| Luma degradation | deterministic in-memory reference card | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363`; the shader derives low/mid/fine-band luma attenuation from that compact state |
+| Chroma degradation | deterministic in-memory reference card | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
+| Reconstruction / output | deterministic in-memory reference card | `4.5`, `5.2`, `5.3`, `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `b_S = 0`, `r_S = 0`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
 
-Current committed output tolerance for those PNG comparisons:
+Current bucketized calibration corpus:
 
-- `max_changed_bytes = 1024`
-- `max_mean_absolute_difference = 0.35`
-- `max_absolute_difference = 3`
+| Bucket | Primary use in baseline review |
+| --- | --- |
+| `01_target-look` | whole-chain target-look sanity and visual hierarchy review |
+| `02_highlights-specular` | highlight shoulder, bright-edge spread, and highlight-led luma priority |
+| `03_color-edges-chroma` | chroma hierarchy, colored-edge restraint, and non-decorative color breakup |
+| `04_portrait-skin` | portrait cohesion, skin-like midtone restraint, and quiet-content analog character |
+| `05_ui-text-detail` | high-frequency luma detail, text softness, and small colored-accent handling |
+| `06_neutral-interior` | neutral quiet scenes and low-amplitude reconstruction character |
+| `07_silhouette-low-detail` | silhouettes, gradients, and low-detail hierarchy |
+| `08_dark-screen-noise` | dark-scene noise visibility, dropout restraint, and low-light contamination character |
 
-Those tolerances are intentionally small enough to catch behavioral regressions while still allowing minor backend-level float differences in the compact multi-pass path.
-
-The repository now also keeps a small synthetic calibration set in `casseted-pipeline` for representative still-image classes:
+The repository also keeps a small synthetic calibration set in `casseted-pipeline` for representative still-image classes:
 
 - colored edges / colored shapes
 - portrait-like midtones
@@ -76,7 +86,7 @@ The repository now also keeps a small synthetic calibration set in `casseted-pip
 - neutral / low-saturation scenes
 - high-frequency UI-like detail
 
-That calibration layer is intentionally note-sized rather than dataset-sized. Its role is to keep the current signal-first hierarchy honest across quiet content, highlight content, and edge-heavy content without introducing a larger fixture-management system.
+That combined synthetic-plus-corpus layer is intentionally note-sized rather than dataset-sized. Its role is to keep the current signal-first hierarchy honest across quiet content, highlight content, and edge-heavy content without introducing a larger fixture-management system.
 
 ## 2. Notation And Variables
 
