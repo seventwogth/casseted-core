@@ -76,6 +76,13 @@ Current visual priority remains intentionally signal-first rather than glitch-fi
 - chroma bandwidth loss and coarse chroma reconstruction before decorative color splitting
 - restrained final-stage contamination and dropout before heavy distortion
 
+Current still-image baseline assessment after the first whole-chain calibration pass:
+
+- strongest foundation: input conditioning, luma degradation, and the core chroma bandwidth-loss path now read coherently across the committed stage fixtures and the synthetic calibration cases
+- strongest content classes: bright highlights and colored-shape scenes, where the current path keeps tone/luma/chroma hierarchy intact and avoids decorative RGB-split behavior
+- weakest content classes: neutral / low-saturation scenes and high-frequency UI-like detail, which can still read a little too clean or too proxy-like because the current default reconstruction character stays very restrained
+- no stage currently looks runaway or architecture-breaking; the remaining gap is underpowered low-amplitude reconstruction character on quiet content, not an over-strong secondary artifact stage
+
 The current implementation path is anchored by:
 
 - [`docs/architecture/overview.md`](./docs/architecture/overview.md)
@@ -93,6 +100,7 @@ Recent refinement steps:
 - [`docs/agent-log/0008-luma-path-refinement.md`](./docs/agent-log/0008-luma-path-refinement.md)
 - [`docs/agent-log/0009-chroma-path-refinement-v2.md`](./docs/agent-log/0009-chroma-path-refinement-v2.md)
 - [`docs/agent-log/0010-final-reconstruction-stage-cleanup.md`](./docs/agent-log/0010-final-reconstruction-stage-cleanup.md)
+- [`docs/agent-log/0017-still-image-baseline-calibration-pass.md`](./docs/agent-log/0017-still-image-baseline-calibration-pass.md)
 
 ## Build and setup
 
@@ -148,5 +156,12 @@ Current testing is intentionally lightweight:
 - a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
 - committed stage-oriented PNG fixtures for the current limited multi-pass still path in `assets/reference-images/still-pipeline-v1/`
 - stage regression coverage for resolved defaults, bounded perturbations, and reference PNG comparisons when a GPU adapter is available
+- synthetic calibration coverage for representative still-image classes:
+  colored edges,
+  portrait-like midtones,
+  bright highlights,
+  neutral / low-saturation scenes,
+  and UI-like detail
+- parity checks that the compiled runtime path matches the direct GPU path across that small calibration set
 - shared helpers in [`docs/testing.md`](./docs/testing.md)
 2026

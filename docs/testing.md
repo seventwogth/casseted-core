@@ -13,6 +13,13 @@ Current layers:
   stage reference PNGs,
   resolved uniforms/defaults,
   and bounded output changes under small parameter perturbations
+- a small synthetic calibration set in `casseted-pipeline` that exercises the default still-image baseline on:
+  colored edges / shapes,
+  portrait-like midtones,
+  bright highlights,
+  neutral / low-saturation scenes,
+  and UI-like high-frequency detail
+- a parity check that the compiled runtime path matches the direct GPU path across that calibration set
 
 What is intentionally not present yet:
 

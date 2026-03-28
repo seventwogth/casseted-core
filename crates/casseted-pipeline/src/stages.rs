@@ -347,10 +347,7 @@ fn head_switching_band_lines(head_switching_band_lines: u32) -> f32 {
     (head_switching_band_lines as f32).clamp(0.0, 20.0)
 }
 
-fn head_switching_offset_px_from_time(
-    head_switching_offset_us: f32,
-    reference_scale: f32,
-) -> f32 {
+fn head_switching_offset_px_from_time(head_switching_offset_us: f32, reference_scale: f32) -> f32 {
     let hard_cap_px = 32.0 * reference_scale;
     (head_switching_offset_us * BT601_SAMPLES_PER_US * reference_scale)
         .clamp(-hard_cap_px, hard_cap_px)

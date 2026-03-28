@@ -68,6 +68,16 @@ Current committed output tolerance for those PNG comparisons:
 
 Those tolerances are intentionally small enough to catch behavioral regressions while still allowing minor backend-level float differences in the compact multi-pass path.
 
+The repository now also keeps a small synthetic calibration set in `casseted-pipeline` for representative still-image classes:
+
+- colored edges / colored shapes
+- portrait-like midtones
+- bright highlights
+- neutral / low-saturation scenes
+- high-frequency UI-like detail
+
+That calibration layer is intentionally note-sized rather than dataset-sized. Its role is to keep the current signal-first hierarchy honest across quiet content, highlight content, and edge-heavy content without introducing a larger fixture-management system.
+
 ## 2. Notation And Variables
 
 ### Coordinates and frame geometry
@@ -1232,6 +1242,13 @@ Important runtime note:
 
 Current calibration intent:
 the projection now overweights luma/chroma bandwidth loss relative to transport and delay terms so the limited multi-pass path reads as technical analog degradation rather than glitch-oriented distortion art.
+
+Current baseline assessment:
+
+- this priority now holds up well on bright highlights and colored-shape content
+- the remaining practical gap is quieter content:
+  neutral scenes, skin-like midtones, and UI/text detail still expose that the current default reconstruction character is intentionally conservative
+- in other words, the current limiting factor is not an over-strong final stage; it is that low-amplitude reconstruction/output character is still a bit too weak to fully carry quiet still images away from a clean digital baseline
 
 ### 7.1 Preview/manual guardrails
 
