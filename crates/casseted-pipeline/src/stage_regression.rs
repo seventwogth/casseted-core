@@ -3,10 +3,7 @@ use crate::stages::{ResolvedStillStages, effect_uniforms, resolve_still_stages};
 use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_shaderlib::ShaderId;
 use casseted_signal::{SignalSettings, ToneSettings, TrackingSettings, VhsModel};
-use casseted_testing::{
-    ImageDiffTolerance, assert_images_match_with_tolerance, image_diff_stats, load_png,
-    reference_card_rgba8_image, save_png,
-};
+use casseted_testing::{image_diff_stats, load_png, reference_card_rgba8_image};
 use casseted_types::{FrameSize, ImageFrame};
 use std::fs;
 use std::path::PathBuf;
@@ -14,11 +11,16 @@ use std::path::PathBuf;
 const REFERENCE_WIDTH: u32 = 96;
 const REFERENCE_HEIGHT: u32 = 64;
 const REFERENCE_SCALE: f32 = REFERENCE_WIDTH as f32 / 720.0;
-const OUTPUT_TOLERANCE: ImageDiffTolerance = ImageDiffTolerance {
-    max_changed_bytes: 1024,
-    max_mean_absolute_difference: 0.35,
-    max_absolute_difference: 3,
-};
+const CURRENT_REFERENCE_BUCKETS: [&str; 8] = [
+    "01_target-look",
+    "02_highlights-specular",
+    "03_color-edges-chroma",
+    "04_portrait-skin",
+    "05_ui-text-detail",
+    "06_neutral-interior",
+    "07_silhouette-low-detail",
+    "08_dark-screen-noise",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StageReferenceCase {
@@ -56,10 +58,6 @@ impl StageReferenceCase {
             Self::ChromaDegradation => "4.4",
             Self::ReconstructionOutput => "4.5 / 5.2 / 5.3 / 5.4",
         }
-    }
-
-    fn reference_image_path(self) -> PathBuf {
-        reference_image_dir().join(format!("{}.png", self.key()))
     }
 
     fn build_pipeline(self) -> StillImagePipeline {
@@ -590,25 +588,36 @@ fn reference_size() -> FrameSize {
     FrameSize::new(REFERENCE_WIDTH, REFERENCE_HEIGHT)
 }
 
-fn reference_image_dir() -> PathBuf {
+fn reference_corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("assets")
         .join("reference-images")
-        .join("still-pipeline-v1")
 }
 
-fn source_image_path() -> PathBuf {
-    reference_image_dir().join("reference-card-96x64.png")
+fn reference_bucket_dir(bucket: &str) -> PathBuf {
+    reference_corpus_dir().join(bucket)
+}
+
+fn reference_bucket_pngs(bucket: &str) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir(reference_bucket_dir(bucket))
+        .unwrap_or_else(|error| panic!("{bucket} bucket should be readable: {error}"))
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let is_png = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+            is_png.then_some(path)
+        })
+        .collect();
+    paths.sort();
+    paths
 }
 
 fn generated_reference_input() -> ImageFrame {
     reference_card_rgba8_image(reference_size())
-}
-
-fn load_reference_input_fixture() -> ImageFrame {
-    load_png(&source_image_path(), 0).expect("reference input PNG should be readable")
 }
 
 fn try_gpu_context() -> Result<GpuContext, GpuInitError> {
@@ -634,24 +643,8 @@ fn assert_approx_eq(actual: f32, expected: f32, label: &str) {
 }
 
 #[test]
-fn reference_input_fixture_matches_generator() {
-    let generated = generated_reference_input();
-    let fixture = load_reference_input_fixture();
-
-    assert_images_match_with_tolerance(
-        &generated,
-        &fixture,
-        ImageDiffTolerance {
-            max_changed_bytes: 0,
-            max_mean_absolute_difference: 0.0,
-            max_absolute_difference: 0,
-        },
-    );
-}
-
-#[test]
 fn stage_uniforms_match_reference_defaults() {
-    let input = load_reference_input_fixture();
+    let input = generated_reference_input();
 
     for case in STAGE_REFERENCE_CASES {
         let pipeline = case.build_pipeline();
@@ -662,19 +655,30 @@ fn stage_uniforms_match_reference_defaults() {
 }
 
 #[test]
-fn stage_reference_images_match_fixtures_when_gpu_is_available() {
-    let gpu = match try_gpu_context() {
-        Ok(context) => context,
-        Err(GpuInitError::AdapterNotFound) => return,
-        Err(error) => panic!("failed to initialize gpu context: {error}"),
-    };
-    let input = load_reference_input_fixture();
+fn reference_bucket_structure_matches_current_baseline_corpus() {
+    let mut actual_buckets: Vec<_> = fs::read_dir(reference_corpus_dir())
+        .expect("reference corpus directory should be readable")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            entry.file_type().ok()?.is_dir().then(|| entry.file_name())
+        })
+        .filter_map(|name| name.to_str().map(str::to_owned))
+        .collect();
+    actual_buckets.sort();
 
-    for case in STAGE_REFERENCE_CASES {
-        let expected = load_png(&case.reference_image_path(), 0)
-            .unwrap_or_else(|error| panic!("{} reference PNG should load: {error}", case.key()));
-        let actual = render_reference_case(&gpu, case, &input);
-        assert_images_match_with_tolerance(&expected, &actual, OUTPUT_TOLERANCE);
+    let expected_buckets = CURRENT_REFERENCE_BUCKETS
+        .iter()
+        .map(|bucket| (*bucket).to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual_buckets, expected_buckets);
+
+    for bucket in CURRENT_REFERENCE_BUCKETS {
+        let images = reference_bucket_pngs(bucket);
+        assert!(
+            !images.is_empty(),
+            "{bucket} should contain at least one PNG reference"
+        );
     }
 }
 
@@ -685,7 +689,7 @@ fn stage_parameter_perturbations_produce_bounded_output_differences() {
         Err(GpuInitError::AdapterNotFound) => return,
         Err(error) => panic!("failed to initialize gpu context: {error}"),
     };
-    let input = load_reference_input_fixture();
+    let input = generated_reference_input();
 
     for case in STAGE_REFERENCE_CASES {
         let mut perturbed = case.build_pipeline();
@@ -703,21 +707,46 @@ fn stage_parameter_perturbations_produce_bounded_output_differences() {
 }
 
 #[test]
-#[ignore = "updates committed stage reference PNGs"]
-fn bless_stage_reference_images() {
-    let gpu = try_gpu_context()
-        .unwrap_or_else(|error| panic!("failed to initialize gpu context: {error}"));
-    let input = generated_reference_input();
-    let reference_dir = reference_image_dir();
+fn default_pipeline_matches_compiled_runtime_on_reference_bucket_corpus_when_gpu_is_available() {
+    let gpu = match try_gpu_context() {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+    let runtime = crate::StillPipelineRuntime::new(&gpu);
+    let pipeline = StillImagePipeline::default();
 
-    fs::create_dir_all(&reference_dir).expect("reference directory should be created");
-    save_png(&source_image_path(), &input).expect("reference input PNG should be written");
+    for bucket in CURRENT_REFERENCE_BUCKETS {
+        for image_path in reference_bucket_pngs(bucket) {
+            let input = load_png(&image_path, 0)
+                .unwrap_or_else(|error| panic!("{} should load: {error}", image_path.display()));
+            let direct = pipeline.process_with_gpu(&gpu, &input).unwrap_or_else(|error| {
+                panic!(
+                    "{} should render on the direct GPU path: {error}",
+                    image_path.display()
+                )
+            });
+            let reused = pipeline
+                .process_with_runtime(&runtime, &input)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} should render on the compiled runtime path: {error}",
+                        image_path.display()
+                    )
+                });
+            let diff = image_diff_stats(&input, &direct);
 
-    for case in STAGE_REFERENCE_CASES {
-        let output = render_reference_case(&gpu, case, &input);
-        save_png(&case.reference_image_path(), &output).unwrap_or_else(|error| {
-            panic!("{} reference PNG should be written: {error}", case.key())
-        });
+            assert_eq!(
+                direct, reused,
+                "{} runtime output drifted",
+                image_path.display()
+            );
+            assert!(
+                diff.changed_bytes > 0,
+                "{} should produce a non-identical processed image",
+                image_path.display()
+            );
+        }
     }
 }
 

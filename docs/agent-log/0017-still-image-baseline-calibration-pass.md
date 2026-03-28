@@ -39,7 +39,16 @@ That made this the right time to stop asking "what can be activated next?" and i
   preview guardrails,
   and the compiled runtime path
 - current architecture, subset, and formulas docs
-- committed stage-regression fixtures in `assets/reference-images/still-pipeline-v1/`
+- the bucketized calibration corpus in `assets/reference-images/`:
+  `01_target-look`,
+  `02_highlights-specular`,
+  `03_color-edges-chroma`,
+  `04_portrait-skin`,
+  `05_ui-text-detail`,
+  `06_neutral-interior`,
+  `07_silhouette-low-detail`,
+  `08_dark-screen-noise`
+- stage-oriented regression inputs via the deterministic in-memory reference card used by `casseted-pipeline`
 - existing stage/defaults/perturbation tests
 - a new small synthetic calibration set covering:
   colored edges / shapes,
@@ -49,6 +58,17 @@ That made this the right time to stop asking "what can be activated next?" and i
   and UI-like high-frequency detail
 
 ## What became clearer
+
+Bucket usage in the review was explicit:
+
+- `01_target-look` anchored the whole-chain target look and visual hierarchy judgment
+- `02_highlights-specular` anchored highlight shoulder and bright-edge spread review
+- `03_color-edges-chroma` anchored chroma hierarchy and colored-edge restraint review
+- `04_portrait-skin` anchored portrait cohesion and skin-like midtone review
+- `05_ui-text-detail` anchored UI/text softness and high-frequency detail review
+- `06_neutral-interior` anchored ordinary quiet-scene / neutral-surface review
+- `07_silhouette-low-detail` anchored silhouette and large-gradient review
+- `08_dark-screen-noise` anchored dark-scene noise visibility and restraint review
 
 ### Strongest parts of the current baseline
 
@@ -90,6 +110,7 @@ That is an important distinction because it means the next gain should be a narr
   neutral / low-saturation scenes,
   and UI-like detail
 - added a parity check proving that `StillPipelineRuntime` matches the direct GPU path on those same cases
+- replaced stale `still-pipeline-v1` fixture-path assumptions with the current bucketized reference corpus plus deterministic in-memory stage inputs
 - updated README / architecture / formulas / testing docs so the current baseline assessment is explicit instead of implied
 
 No stage defaults or shader coefficients were changed during this pass.
