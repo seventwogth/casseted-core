@@ -35,6 +35,7 @@ impl VideoStandard {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoMatrix {
+    /// The current still-image v1 runtime only exposes this fixed working matrix.
     Bt601,
 }
 
@@ -222,10 +223,15 @@ impl Default for VhsModel {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VhsInputSettings {
     /// Working luma/chroma matrix used after input normalization.
+    /// The current still-image subset keeps this fixed to `Bt601`.
     pub matrix: VideoMatrix,
     /// Transfer curve assumed for the incoming RGB image.
+    /// This remains a formal selector; the current still-image subset keeps a
+    /// fixed gamma-coded `sRGB` assumption instead of field-driven switching.
     pub transfer: InputTransfer,
     /// Temporal interpretation of the source frame semantics.
+    /// The current still-image subset keeps progressive still-frame semantics
+    /// and does not yet branch on this field.
     pub temporal_sampling: TemporalSampling,
 }
 
@@ -322,6 +328,7 @@ mod tests {
         let model = VhsModel::pal_v1();
 
         assert_eq!(model.standard, VideoStandard::Pal);
+        assert_eq!(model.input.matrix, VideoMatrix::Bt601);
         assert_eq!(model.chroma.bandwidth_khz, 350.0);
         assert_eq!(model.transport.head_switching_band_lines, 8);
     }

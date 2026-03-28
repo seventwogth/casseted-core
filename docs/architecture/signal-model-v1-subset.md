@@ -5,7 +5,7 @@ This note records how the current still-image runtime relates to the formal `Vhs
 Important distinction:
 
 - a formal stage can already be active while some fields in its owning parameter group are still deferred
-- the clearest example is `InputDecode`: the runtime currently assumes gamma-coded `sRGB` input and a BT.601-like matrix, but changing `VhsInputSettings` does not yet change shader behavior
+- the clearest example is `InputDecode`: the runtime currently assumes gamma-coded `sRGB` input, a BT.601-like working matrix, and progressive still-frame semantics, but only the matrix assumption is fixed-active; `transfer` and `temporal_sampling` still do not change shader behavior
 
 Use this as the field-level companion to:
 
@@ -37,9 +37,13 @@ Use this as the field-level companion to:
 
 ### Input / working-signal assumptions
 
-- `InputDecode` as a formal stage is active, but it currently runs as a fixed assumption set rather than a field-driven selector:
+- `InputDecode` as a formal stage is active, but it currently runs mostly as a fixed assumption set rather than a broader field-driven selector:
   gamma-coded `sRGB` input, BT.601-like `YUV`, and progressive still-frame interpretation.
-  Notes: the stage exists in the runtime, while `VhsInputSettings` still do not parameterize it.
+  Notes: the stage exists in the runtime; the fixed matrix assumption now aligns with the only current `VideoMatrix` formal choice, while `transfer` and `temporal_sampling` remain deferred selectors.
+- `VhsInputSettings.matrix`
+  Runtime status: fixed-active under the current still-image subset.
+  Runtime path: the formal field currently exposes only `VideoMatrix::Bt601`, and the active WGSL path hardcodes the matching BT.601-like `rgb_to_yuv()` / `yuv_to_rgb()` working transform.
+  Why partial: this is a fixed formalized assumption, not a selector surface. The runtime now has an explicit matrix boundary, but it still does not expose alternate matrix choices or matrix-driven branching.
 
 ### Luma parameters
 
@@ -117,10 +121,12 @@ Use this as the field-level companion to:
 
 ### Input / temporal selectors
 
-- `VhsInputSettings.matrix`
 - `VhsInputSettings.transfer`
 - `VhsInputSettings.temporal_sampling`
-  Current state: documented assumptions exist and the stage is active, but changing these fields does not yet change projection, uniforms, or WGSL behavior.
+  Current state: documented assumptions exist and the stage is active, but changing these fields does not yet change projection, resolved stages, packed uniforms, or WGSL behavior.
+  Current fixed assumptions: `still_input_conditioning.wgsl` samples gamma-coded RGB and converts it directly into the BT.601-like working `YUV` representation, while the same fixed matrix is inverted later in `still_reconstruction_output.wgsl`.
+  Boundary note: the active `InputDecode` stage therefore currently means "enter the still path under one fixed input contract", not "field-level input control surface is live".
+  Why deferred: `InputTransfer::{Srgb,Bt601}` would require a grounded input-transfer interpretation rather than a cosmetic look toggle, and `TemporalSampling::{ProgressiveFrame,InterlacedFields}` would require a real temporal/field semantic boundary instead of a still-image proxy guess.
 
 ### Decode / output selector
 
@@ -138,7 +144,7 @@ Use this as the field-level companion to:
 
 ## Most Justified Next Activations
 
-1. `VhsInputSettings.*`
-   Why next: they are still the clearest remaining decode-side selectors that could later make the current fixed input assumptions explicit without expanding the runtime into a broader subsystem.
+1. `VhsInputSettings.{transfer,temporal_sampling}`
+   Why next: they are still the clearest remaining decode-side selectors that could later expose the current fixed input contract more explicitly, but they should only move once the still path can ground them semantically instead of inventing a broader input-management framework.
 2. A broader decode/output milestone, if later justified
    Why later: `VhsDecodeSettings.output_transfer` should only move when the still path grows an explicit post-decode output semantic boundary, not as a standalone post-look toggle.

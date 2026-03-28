@@ -41,6 +41,9 @@ struct ReconstructionContamination {
 @group(0) @binding(2) var signal_sampler: sampler;
 @group(0) @binding(3) var<uniform> effect: EffectUniform;
 
+// The decode edge uses the same fixed BT.601-like working matrix as the input
+// conditioning pass. `output_transfer` remains deferred after this inverse
+// matrix + clamp step.
 fn yuv_to_rgb(yuv: vec3<f32>) -> vec3<f32> {
     let y = yuv.x;
     let u = yuv.y;
