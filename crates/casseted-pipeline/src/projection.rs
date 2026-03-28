@@ -105,6 +105,12 @@ impl TrackingOverrides {
 }
 
 pub(crate) fn project_vhs_model_to_preview_signal(model: VhsModel) -> SignalSettings {
+    // Only the currently active still-image runtime subset is projected here.
+    // The fixed BT.601-like working matrix is already baked into the active
+    // still-image shaders, but input transfer / temporal selectors and output
+    // transfer remain documented-only.
+    // Chroma-phase and head-switching terms stay off the preview surface and
+    // resolve directly as model-only stage auxiliaries during packing.
     SignalSettings {
         tone: ToneSettings {
             highlight_soft_knee: model.tone.highlight_soft_knee,

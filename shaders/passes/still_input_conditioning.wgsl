@@ -16,6 +16,10 @@ struct VsOutput {
 @group(0) @binding(1) var input_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
 
+// `VhsInputSettings.matrix` is currently fixed-active only as the BT.601-like
+// working transform below. Input transfer and temporal selectors remain
+// deferred, so this pass still assumes gamma-coded `sRGB` and progressive
+// still-frame semantics.
 const BT601_LUMA: vec3<f32> = vec3<f32>(0.299, 0.587, 0.114);
 
 fn rgb_to_yuv(rgb: vec3<f32>) -> vec3<f32> {
@@ -31,7 +35,10 @@ fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
 }
 
 fn frame_inv_size() -> vec2<f32> {
-    return vec2<f32>(effect.frame.z, 1.0 / max(effect.frame.y, 1.0));
+    return vec2<f32>(
+        1.0 / max(effect.frame.x, 1.0),
+        1.0 / max(effect.frame.y, 1.0),
+    );
 }
 
 fn soft_highlight_knee(value: f32, knee: f32, compression: f32) -> f32 {

@@ -11,6 +11,9 @@ implemented in the repository working tree
 Agent commit status:
 no git commit was created by the agent during this stage. Future entries in this directory should list any agent-created commits explicitly when they exist.
 
+Historical note:
+this entry predates the later chroma-phase and head-switching activation milestones. References below to those areas being deferred describe the repository state on 2026-03-18, not the current status after `0012` and `0013`.
+
 ## Review focus
 
 This stage targeted two structural risks that had become more important than adding new image effects:

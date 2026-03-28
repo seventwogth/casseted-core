@@ -8,6 +8,9 @@ use std::sync::mpsc;
 
 const BYTES_PER_PIXEL_RGBA8: u32 = 4;
 const INTERMEDIATE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+// The current still-image subset stops at decoded/clamped RGB numerics.
+// `output_transfer` remains deferred, so the runtime writes into plain unorm
+// storage instead of applying an additional framebuffer/output transfer step.
 const OUTPUT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 #[derive(Debug)]
@@ -73,10 +76,14 @@ struct StillRunResources {
 impl<'a> StillPipelineRuntime<'a> {
     pub fn new(context: &'a GpuContext) -> Self {
         let sampler = create_linear_sampler(&context.device);
-        let single_texture_layout =
-            create_single_texture_bind_group_layout(&context.device, "casseted-still-image-single-input");
-        let dual_texture_layout =
-            create_dual_texture_bind_group_layout(&context.device, "casseted-still-image-dual-input");
+        let single_texture_layout = create_single_texture_bind_group_layout(
+            &context.device,
+            "casseted-still-image-single-input",
+        );
+        let dual_texture_layout = create_dual_texture_bind_group_layout(
+            &context.device,
+            "casseted-still-image-dual-input",
+        );
         let pass_chain = CompiledStillPassChain::new(
             &context.device,
             &single_texture_layout,
@@ -229,11 +236,7 @@ impl<'a> StillPipelineRuntime<'a> {
         ImageFrame::new(input.descriptor.clone(), output_bytes).map_err(PipelineError::ImageData)
     }
 
-    fn create_run_resources(
-        &self,
-        input: &ImageFrame,
-        uniform_bytes: &[u8],
-    ) -> StillRunResources {
+    fn create_run_resources(&self, input: &ImageFrame, uniform_bytes: &[u8]) -> StillRunResources {
         let texture_size = input.descriptor.size;
         let input_texture = create_input_texture(self.device, self.queue, input);
         let working_texture = create_pipeline_texture(

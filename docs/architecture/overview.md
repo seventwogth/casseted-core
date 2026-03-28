@@ -33,6 +33,8 @@ The key point in the current phase is that the still-image path is now explicit 
 - the working GPU path groups them into five implementation stages and executes them as a compact four-pass runtime without a render graph
 - the compiled runtime layer owns reusable GPU execution state for that fixed pass chain, while `StillImagePipeline` remains only the high-level description of the still-image effect
 
+The field-level boundary is now explicit too: [`signal-model-v1-subset.md`](./signal-model-v1-subset.md) records which formal v1 fields are fully active, which are active only through the current projection/approximation layer, and which are still deliberately deferred. On the input side that boundary is intentionally narrow: the still runtime already uses one fixed BT.601-like working matrix, while `VhsInputSettings.transfer` and `VhsInputSettings.temporal_sampling` remain deferred selectors.
+
 Why this degree of decomposition was chosen:
 
 - it gives the still path a real branch point between luma and chroma
@@ -42,8 +44,8 @@ Why this degree of decomposition was chosen:
 What remains intentionally fused:
 
 - input interpretation, still-frame transport offsets, tone shaping, and `RGB -> YUV` fan-out share the first pass
-- dropout-conditioned reconstruction, refined contamination, and decode reconstruction remain together in the final pass
-- the final pass only reuses the conditioned scan-line phase as a procedural seed for noise/dropout placement; it does not resample luma/chroma through transport a second time
+- head-switching-conditioned reconstruction, dropout-conditioned reconstruction, refined contamination, and decode reconstruction remain together in the final pass
+- the final pass only reuses the conditioned scan-line phase as a procedural seed for lower-band switching disturbance and noise/dropout placement; it does not resample luma/chroma through transport a second time
 
 What is now intentionally reused across repeated runs:
 
@@ -65,15 +67,38 @@ Toolchain note:
 - the canonical workspace toolchain is now pinned to Rust `1.88.0` in `rust-toolchain.toml`
 - workspace verification commands are expected to run with `Cargo.lock` via `--locked`
 
-Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softness, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch now expresses bandwidth loss as horizontal low-pass filtering plus cell-integrated coarse chroma reconstruction and a restrained trailing contamination tail, with extra smear held back on strong luma edges so color stays subordinate to structure. The luma branch continues to use a broader low-pass foundation with separate fine-detail and mid-band attenuation so the image loses crisp digital sharpness without collapsing into plain blur. Bright contours also pick up a small asymmetric lag/bleed bias from preceding samples, so they spread as part of signal loss instead of as post-process bloom. The final pass now makes its own sequence explicit too: it first conditions the branch outputs through restrained dropout concealment, then applies `Y/C`-space contamination, then decodes through a small residual leakage term. That keeps luma contamination brightness-shaped and mildly line/band-correlated, keeps chroma contamination broader and softer than luma, and stops stronger dropout concealment from immediately reading as freshly re-colored leakage. Jitter, crosstalk, refined contamination, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
+Within that compact multi-pass path, the current visual calibration still intentionally favors tone shaping, luma softness, restrained highlight bleed, and chroma bandwidth loss over transport wobble. The chroma branch now expresses bandwidth loss as horizontal low-pass filtering plus cell-integrated coarse chroma reconstruction, a restrained trailing contamination tail, and a direct but restrained chroma-phase bias at the handoff to reconstruction, with extra smear held back on strong luma edges so color stays subordinate to structure. The luma branch continues to use a broader low-pass foundation with separate fine-detail and mid-band attenuation so the image loses crisp digital sharpness without collapsing into plain blur. Bright contours also pick up a small asymmetric lag/bleed bias from preceding samples, so they spread as part of signal loss instead of as post-process bloom. The final pass now makes its own sequence explicit too: it first applies a restrained lower-band head-switching approximation, then conditions the branch outputs through restrained dropout concealment, then applies `Y/C`-space contamination and low-band chroma phase noise, then decodes through a small residual leakage term. That explicit decode path currently stops at clamped RGB numerics written directly to the final `RGBA8` image; `output_transfer` is still deferred, so there is no extra post-decode display/output shaper. That keeps the new transport-side disturbance localized to the lower switching band, keeps luma contamination brightness-shaped and mildly line/band-correlated, keeps chroma contamination broader and softer than luma, and turns chroma-phase instability into a restrained chroma-vector perturbation instead of an RGB-split decoration. Jitter, lower-band switching disturbance, crosstalk, refined contamination, and mild line-segment dropout remain present, but they are kept subordinate so the result reads as analog signal degradation instead of glitch-like distortion.
 
 The current verification foundation mirrors that structure:
 
 - committed PNG fixtures live in `assets/reference-images/still-pipeline-v1/`
 - `casseted-pipeline` runs stage-oriented reference tests against those fixtures with fixed tolerances
 - `casseted-testing` provides the deterministic source card, PNG helpers, and image-difference assertions
+- `casseted-pipeline` also now runs a small synthetic calibration set for representative still-image classes:
+  colored edges / shapes,
+  portrait-like midtones,
+  bright highlights,
+  neutral / low-saturation scenes,
+  and high-frequency UI-like detail
+- the compiled runtime path is checked against the direct GPU path on those same calibration cases, so runtime reuse stays aligned with the baseline review inputs
+
+Still-image baseline assessment after that calibration pass:
+
+- strongest stages:
+  input conditioning / tone shaping,
+  luma degradation,
+  and the current chroma bandwidth-loss / reconstruction branch
+- strongest image classes:
+  bright highlights and colored-shape scenes, where tone rolloff, highlight spread, and chroma softening stay subordinate and coherent
+- weakest image classes:
+  neutral / low-saturation scenes and UI-like high-frequency detail, where the default path can still read slightly too clean or too proxy-like because low-amplitude reconstruction character remains very restrained
+- systematic balance:
+  the current chain does not look dominated by one runaway refinement milestone; the remaining imbalance is mostly that quiet-scene reconstruction character is conservative, not that final-stage effects are too strong
+- highest-value next milestone:
+  a compact reconstruction-side calibration pass for quiet content, focused on neutral surfaces, skin-like midtones, and UI/text detail rather than on adding a new artifact family
 
 Reference documents:
 
 - [`signal-model-v1.md`](./signal-model-v1.md)
+- [`signal-model-v1-subset.md`](./signal-model-v1-subset.md)
 - [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)

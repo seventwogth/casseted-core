@@ -51,6 +51,7 @@ pub(crate) struct ChromaDegradationStage {
     pub(crate) blur_px: f32,
     pub(crate) saturation: f32,
     pub(crate) vertical_blend: f32,
+    pub(crate) phase_error_rad: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +61,9 @@ pub(crate) struct ReconstructionOutputStage {
     pub(crate) y_c_leakage: f32,
     pub(crate) dropout_line_probability: f32,
     pub(crate) dropout_span_px: f32,
+    pub(crate) chroma_phase_noise_rad: f32,
+    pub(crate) head_switching_band_lines: f32,
+    pub(crate) head_switching_offset_px: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,7 +82,9 @@ impl From<ResolvedStillStages> for EffectUniforms {
             frame: [
                 stages.frame.width,
                 stages.frame.height,
-                stages.frame.inv_width,
+                // Keep the block compact: derive inverse size in shader and
+                // reuse the third lane for the model-only head-switching band.
+                stages.reconstruction_output.head_switching_band_lines,
                 stages.frame.frame_index,
             ],
             input_conditioning: [
@@ -103,13 +109,18 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 stages.reconstruction_output.luma_contamination_amount,
                 stages.reconstruction_output.chroma_contamination_amount,
                 stages.reconstruction_output.y_c_leakage,
-                0.0,
+                stages.reconstruction_output.head_switching_offset_px,
             ],
             reconstruction_aux: [
                 stages.reconstruction_output.dropout_line_probability,
                 stages.reconstruction_output.dropout_span_px,
-                0.0,
-                0.0,
+                // Keep the shared block compact: the model-only chroma-phase
+                // terms reuse the auxiliary spill lanes instead of widening the
+                // preview-facing stage surface. `z` is packed here for the
+                // chroma pass, while `w` is consumed later by the final
+                // reconstruction/output pass.
+                stages.chroma_degradation.phase_error_rad,
+                stages.reconstruction_output.chroma_phase_noise_rad,
             ],
         }
     }
@@ -234,6 +245,9 @@ fn resolve_chroma_degradation_stage(
     let vertical_blend = model
         .map(|vhs| vhs.decode.chroma_vertical_blend.clamp(0.0, 1.0))
         .unwrap_or(0.0);
+    let phase_error_rad = model
+        .map(|vhs| chroma_phase_error_rad(vhs.chroma.phase_error_deg))
+        .unwrap_or(0.0);
 
     ChromaDegradationStage {
         offset_px: signal.chroma.offset_px * reference_scale,
@@ -243,6 +257,7 @@ fn resolve_chroma_degradation_stage(
         blur_px: signal.chroma.bleed_px.max(0.0) * reference_scale,
         saturation: signal.chroma.saturation.max(0.0),
         vertical_blend,
+        phase_error_rad,
     }
 }
 
@@ -255,14 +270,33 @@ fn resolve_reconstruction_output_stage(
         .map(|vhs| vhs.decode.luma_chroma_crosstalk.clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let reference_scale = (input.descriptor.size.width as f32 / REFERENCE_WIDTH_PX).max(0.0);
-    let (dropout_line_probability, dropout_span_px) = model
+    let (
+        dropout_line_probability,
+        dropout_span_px,
+        head_switching_band_lines,
+        head_switching_offset_px,
+    ) = model
         .map(|vhs| {
+            let head_switching_band_lines =
+                head_switching_band_lines(vhs.transport.head_switching_band_lines);
             (
                 dropout_line_probability(vhs.noise.dropout_probability_per_line),
                 dropout_span_px_from_time(vhs.noise.dropout_mean_span_us, reference_scale),
+                head_switching_band_lines,
+                if head_switching_band_lines > 0.0 {
+                    head_switching_offset_px_from_time(
+                        vhs.transport.head_switching_offset_us,
+                        reference_scale,
+                    )
+                } else {
+                    0.0
+                },
             )
         })
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+    let chroma_phase_noise_rad = model
+        .map(|vhs| chroma_phase_noise_rad(vhs.noise.chroma_phase_noise_deg))
+        .unwrap_or(0.0);
 
     ReconstructionOutputStage {
         luma_contamination_amount: signal.noise.luma_amount.max(0.0),
@@ -270,11 +304,22 @@ fn resolve_reconstruction_output_stage(
         y_c_leakage,
         dropout_line_probability,
         dropout_span_px,
+        chroma_phase_noise_rad,
+        head_switching_band_lines,
+        head_switching_offset_px,
     }
 }
 
 fn detail_mix_from_preemphasis(preemphasis_db: f32) -> f32 {
     (preemphasis_db.max(0.0) * 0.015).min(0.12)
+}
+
+fn chroma_phase_error_rad(phase_error_deg: f32) -> f32 {
+    phase_error_deg.to_radians()
+}
+
+fn chroma_phase_noise_rad(chroma_phase_noise_deg: f32) -> f32 {
+    chroma_phase_noise_deg.max(0.0).to_radians()
 }
 
 fn highlight_bleed_threshold(highlight_soft_knee: f32) -> f32 {
@@ -296,4 +341,14 @@ fn dropout_line_probability(dropout_probability_per_line: f32) -> f32 {
 fn dropout_span_px_from_time(dropout_mean_span_us: f32, reference_scale: f32) -> f32 {
     (dropout_mean_span_us.max(0.0) * BT601_SAMPLES_PER_US * reference_scale)
         .min(48.0 * reference_scale)
+}
+
+fn head_switching_band_lines(head_switching_band_lines: u32) -> f32 {
+    (head_switching_band_lines as f32).clamp(0.0, 20.0)
+}
+
+fn head_switching_offset_px_from_time(head_switching_offset_us: f32, reference_scale: f32) -> f32 {
+    let hard_cap_px = 32.0 * reference_scale;
+    (head_switching_offset_us * BT601_SAMPLES_PER_US * reference_scale)
+        .clamp(-hard_cap_px, hard_cap_px)
 }
