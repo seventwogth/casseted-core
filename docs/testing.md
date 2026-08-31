@@ -32,7 +32,10 @@ Current layers:
 A note on the edge-retention metric:
 it is a ratio of mean *squared* horizontal steps. Total variation is conserved when a monotonic edge is blurred, so a mean-absolute ratio cannot observe bandwidth loss on step-like content and instead tracks whatever contamination the final pass adds. The squared form falls as an edge spreads and is largely insensitive to additive contamination, which is what these assertions are meant to measure.
 
-The one place that insensitivity does not hold is content whose own gradient energy is very low, such as the dark quiet-floor case in chroma, where added contamination can outweigh the signal. Assertions should not lean on edge retention for that combination.
+The one place that insensitivity does not hold is content whose own gradient energy is very low, where added contamination can outweigh the signal. This affects chroma on low-saturation fixtures more than luma: `dark-quiet-floor` reports chroma retention above luma, and `neutral-low-saturation` clears its hierarchy assertion by a thin margin for the same reason. Treat chroma retention on those two as indicative rather than load-bearing, and do not add assertions that lean on it.
+
+A note on the fixtures themselves:
+they were authored against a 160 px-wide layout and place several features with absolute pixel arithmetic. Those sizes are expressed in design units so the patterns keep their intended proportions at the reference width. Without that, a grid authored as "every 16 px of a 160 px frame" renders as a near-Nyquist grating and the fixture stops representing the content class it is named after. Any new fixture should follow the same rule.
 
 What is intentionally not present yet:
 

@@ -11,6 +11,13 @@ const CALIBRATION_SIZE: FrameSize = FrameSize {
     width: 720,
     height: 540,
 };
+// The synthetic fixtures were authored against a 160 px-wide layout, and
+// several of them place features with absolute pixel arithmetic. Expressing
+// those sizes in design units keeps the intended proportions now that the
+// suite renders at the reference width; without it a grid authored as "every
+// 16 px of a 160 px frame" becomes a near-Nyquist grating, and the fixture
+// stops representing the content class it is named after.
+const CALIBRATION_DESIGN_WIDTH: u32 = 160;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CalibrationCase {
@@ -417,18 +424,23 @@ where
 }
 
 fn colored_edges_image(size: FrameSize) -> ImageFrame {
+    let unit = design_unit(size);
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
         let mut rgb = [0.06, 0.06, 0.07];
 
-        if x > 12 && x < size.width / 2 - 8 && y > 16 && y < size.height / 2 {
+        if x > 12 * unit && x < size.width / 2 - 8 * unit && y > 16 * unit && y < size.height / 2 {
             rgb = [0.88, 0.18, 0.16];
-        } else if x >= size.width / 2 && x < size.width - 14 && y > 16 && y < size.height / 2 {
+        } else if x >= size.width / 2
+            && x < size.width - 14 * unit
+            && y > 16 * unit
+            && y < size.height / 2
+        {
             rgb = [0.18, 0.72, 0.24];
-        } else if x > 18 && x < size.width / 2 && y >= size.height / 2 {
+        } else if x > 18 * unit && x < size.width / 2 && y >= size.height / 2 {
             rgb = [0.18, 0.32, 0.90];
-        } else if x >= size.width / 2 && x < size.width - 18 && y >= size.height / 2 {
+        } else if x >= size.width / 2 && x < size.width - 18 * unit && y >= size.height / 2 {
             rgb = [0.90, 0.82, 0.18];
         }
 
@@ -491,6 +503,7 @@ fn portrait_midtones_image(size: FrameSize) -> ImageFrame {
 }
 
 fn bright_highlights_image(size: FrameSize) -> ImageFrame {
+    let unit = design_unit(size);
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
@@ -509,13 +522,14 @@ fn bright_highlights_image(size: FrameSize) -> ImageFrame {
             rgb = [0.82 + glow * 0.18, 0.80 + glow * 0.18, 0.76 + glow * 0.20];
         }
 
-        if x > size.width / 2 + 10
-            && x < size.width - 16
+        if x > size.width / 2 + 10 * unit
+            && x < size.width - 16 * unit
             && y > size.height / 2
-            && y < size.height - 18
+            && y < size.height - 18 * unit
         {
-            let ramp =
-                ((x - (size.width / 2 + 10)) as f32 / (size.width / 2 - 26) as f32).clamp(0.0, 1.0);
+            let ramp = ((x - (size.width / 2 + 10 * unit)) as f32
+                / (size.width / 2 - 26 * unit) as f32)
+                .clamp(0.0, 1.0);
             let hot = 0.78 + ramp * 0.22;
             rgb = [hot, hot * 0.92 + 0.05, hot * 0.62 + 0.18];
         }
@@ -525,10 +539,11 @@ fn bright_highlights_image(size: FrameSize) -> ImageFrame {
 }
 
 fn neutral_low_saturation_image(size: FrameSize) -> ImageFrame {
+    let unit = design_unit(size);
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
-        let tile = ((x / 20) + (y / 20)) % 2;
+        let tile = ((x / (20 * unit)) + (y / (20 * unit))) % 2;
         let checker = if tile == 0 { 0.0 } else { 0.035 };
         let base = 0.28 + fx * 0.28 + fy * 0.06;
         let cool = 0.01 * (1.0 - fy);
@@ -539,29 +554,34 @@ fn neutral_low_saturation_image(size: FrameSize) -> ImageFrame {
 }
 
 fn ui_detail_edges_image(size: FrameSize) -> ImageFrame {
+    let unit = design_unit(size);
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
         let mut rgb = [0.94, 0.95, 0.97];
 
-        if x > 10 && x < size.width - 10 && y > 10 && y < size.height - 10 {
+        if x > 10 * unit
+            && x < size.width - 10 * unit
+            && y > 10 * unit
+            && y < size.height - 10 * unit
+        {
             rgb = [0.86, 0.88, 0.90];
         }
 
-        if y % 8 == 0 || x % 16 == 0 {
+        if y % (8 * unit) < unit || x % (16 * unit) < unit {
             rgb = [0.18, 0.20, 0.23];
         }
 
-        if y > 22 && y < 30 && x > 18 && x < size.width - 18 {
+        if y > 22 * unit && y < 30 * unit && x > 18 * unit && x < size.width - 18 * unit {
             rgb = [0.12, 0.13, 0.15];
         }
 
-        if y > 40 && y < 44 && x > 22 && x < size.width - 28 {
+        if y > 40 * unit && y < 44 * unit && x > 22 * unit && x < size.width - 28 * unit {
             rgb = [0.08, 0.09, 0.10];
         }
 
-        if y > 58 && y < 64 {
-            let segment = (x / 6) % 3;
+        if y > 58 * unit && y < 64 * unit {
+            let segment = (x / (6 * unit)) % 3;
             rgb = match segment {
                 0 => [0.90, 0.20, 0.20],
                 1 => [0.16, 0.66, 0.22],
@@ -571,7 +591,7 @@ fn ui_detail_edges_image(size: FrameSize) -> ImageFrame {
 
         if fy > 0.70 && fy < 0.84 && fx > 0.16 && fx < 0.86 {
             rgb = [0.97, 0.97, 0.98];
-            if x % 5 == 0 {
+            if x % (5 * unit) < unit {
                 rgb = [0.06, 0.06, 0.07];
             }
         }
@@ -581,6 +601,7 @@ fn ui_detail_edges_image(size: FrameSize) -> ImageFrame {
 }
 
 fn dark_quiet_floor_image(size: FrameSize) -> ImageFrame {
+    let unit = design_unit(size);
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
@@ -605,23 +626,31 @@ fn dark_quiet_floor_image(size: FrameSize) -> ImageFrame {
             }
         }
 
-        if x > size.width / 2 - 8
-            && x < size.width / 2 + 10
-            && y > size.height - 18
-            && y < size.height - 8
+        if x > size.width / 2 - 8 * unit
+            && x < size.width / 2 + 10 * unit
+            && y > size.height - 18 * unit
+            && y < size.height - 8 * unit
         {
             rgb = [0.78, 0.78, 0.80];
         }
 
-        if x > 12 && x < 20 && y > size.height - 26 && y < size.height - 10 {
+        if x > 12 * unit
+            && x < 20 * unit
+            && y > size.height - 26 * unit
+            && y < size.height - 10 * unit
+        {
             rgb = [0.06, 0.07, 0.08];
-            if y % 4 == 0 {
+            if y % (4 * unit) < unit {
                 rgb = [0.78, 0.79, 0.82];
             }
         }
 
         rgba8(rgb)
     })
+}
+
+fn design_unit(size: FrameSize) -> u32 {
+    (size.width / CALIBRATION_DESIGN_WIDTH).max(1)
 }
 
 fn rgba8(rgb: [f32; 3]) -> [u8; 4] {
