@@ -25,6 +25,14 @@ const GRATING_CHROMA_RED_AMPLITUDE: f32 = 0.20;
 // Keeps the chroma grating at constant luma: 0.299 * dR + 0.587 * dG = 0.
 const GRATING_CHROMA_GREEN_AMPLITUDE: f32 = 0.1018;
 const RESOLUTION_INVARIANCE_TOLERANCE: f32 = 0.10;
+// Reconstruction contamination is also specified at the reference width. On a
+// flat field its energy at a fixed set of relative frequencies must not fall
+// away as the raster grows, otherwise a high-resolution render reads cleaner
+// than the same content at the reference width.
+const NOISE_PROBE_HEIGHT: u32 = 180;
+const NOISE_PROBE_LEVEL: u8 = 128;
+const NOISE_PROBE_CYCLES_PER_FRAME: [f32; 6] = [10.0, 20.0, 40.0, 80.0, 160.0, 240.0];
+const NOISE_PROBE_TOLERANCE: f32 = 0.45;
 const CURRENT_REFERENCE_BUCKETS: [&str; 8] = [
     "01_target-look",
     "02_highlights-specular",
@@ -705,6 +713,54 @@ fn modulation_transfer(frame: &ImageFrame, band: GratingBand) -> f32 {
     total / rows as f32
 }
 
+fn luma_contamination_reference_model() -> VhsModel {
+    // Isolate reconstruction contamination: no bandwidth loss, tone shaping,
+    // transport, dropout, or decode terms, so a flat input leaves only the
+    // luma contamination the final pass injects.
+    let mut model = neutral_reference_model();
+    model.noise.luma_sigma = 0.018;
+    model
+}
+
+fn flat_field_image(width: u32) -> ImageFrame {
+    let size = FrameSize::new(width, NOISE_PROBE_HEIGHT);
+    let data = vec![NOISE_PROBE_LEVEL; size.pixels() as usize * 4];
+    ImageFrame::rgba8(size, data).expect("generated flat field should be valid")
+}
+
+// Sparse spectral probe: total contamination power carried at a fixed set of
+// cycles-per-frame, normalized so the value is comparable across widths. The
+// probe frequencies stay well below the 360 cycles/frame Nyquist limit of the
+// narrowest tested raster.
+fn contamination_band_power(frame: &ImageFrame) -> f32 {
+    let width = frame.descriptor.size.width;
+    let height = frame.descriptor.size.height;
+    let sample_count = width as f32;
+    let mut total = 0.0;
+
+    for y in 0..height {
+        let mean = (0..width)
+            .map(|x| sample_luma_and_chroma_v(frame, x, y).0)
+            .sum::<f32>()
+            / sample_count;
+        for cycles in NOISE_PROBE_CYCLES_PER_FRAME {
+            let mut cosine_sum = 0.0;
+            let mut sine_sum = 0.0;
+            for x in 0..width {
+                let value = sample_luma_and_chroma_v(frame, x, y).0 - mean;
+                let phase = std::f32::consts::TAU * cycles * x as f32 / width as f32;
+                cosine_sum += value * phase.cos();
+                sine_sum += value * phase.sin();
+            }
+            let cosine_mean = cosine_sum / sample_count;
+            let sine_mean = sine_sum / sample_count;
+            total += cosine_mean * cosine_mean + sine_mean * sine_mean;
+        }
+    }
+
+    total / height as f32
+}
+
 fn reference_size() -> FrameSize {
     FrameSize::new(REFERENCE_WIDTH, REFERENCE_HEIGHT)
 }
@@ -913,6 +969,43 @@ fn horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_availabl
              (tolerance {RESOLUTION_INVARIANCE_TOLERANCE}, measured {responses:?}); horizontal \
              spatial constants must be expressed in reference pixels and scaled by s_ref",
             band.label(),
+        );
+    }
+}
+
+#[test]
+fn reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available() {
+    let gpu = match try_gpu_context() {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+    let pipeline = StillImagePipeline::from_vhs_model(luma_contamination_reference_model());
+
+    let powers: Vec<f32> = GRATING_WIDTHS
+        .iter()
+        .map(|&width| {
+            let input = flat_field_image(width);
+            let output = pipeline
+                .process_with_gpu(&gpu, &input)
+                .unwrap_or_else(|error| panic!("{width}px flat field should render: {error}"));
+            contamination_band_power(&output)
+        })
+        .collect();
+
+    let baseline = powers[0];
+    assert!(
+        baseline > 0.0,
+        "reference-width flat field carried no measurable contamination",
+    );
+
+    for (width, power) in GRATING_WIDTHS.iter().zip(&powers).skip(1) {
+        let retained = power / baseline;
+        assert!(
+            (retained - 1.0).abs() <= NOISE_PROBE_TOLERANCE,
+            "contamination power at {width}px is {retained} of the reference-width level \
+             (tolerance {NOISE_PROBE_TOLERANCE}, measured {powers:?}); contamination structure \
+             must be specified in reference pixels so it does not thin out as the raster grows",
         );
     }
 }

@@ -213,12 +213,27 @@ Rules currently enforced:
 
 - constants inside horizontal spatial terms are multiplied by \(\hat{s}\)
 - saturating mixes, \(\eta_Y\) and \(\eta_C\), are evaluated on the reference-pixel radius \(r / \hat{s}\), so attenuation strength tracks the modelled bandwidth rather than the output raster
+- horizontal noise frequencies are stated per reference pixel, so a contamination band keeps the same number of cycles across the frame at any width
+- per-pixel hash noise is sampled on the reference-pixel grid with horizontal interpolation, so it stays inside the modelled bandwidth instead of following the output raster
 - \(\hat{s}\) is clamped at `1.0`: the look is defined at the reference width, and below it the raster is already the narrower limit, so the calibration is scaled up but never down
 
-Consequence: a given relative spatial frequency is attenuated by the same amount at any output width at or above the reference width, and the chroma-versus-luma hierarchy of section `4.4` stays intact instead of flattening as resolution grows.
+Because the interpolation weight is exactly zero when \(\hat{s} = 1\), all of the above reduce to the reference-width forms, and output at or below 720 px is unchanged bit for bit.
 
-Regression anchor:
-`horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available` in `casseted-pipeline` renders a fixed relative grating at 720, 2160, and 3600 px wide and asserts that the measured modulation transfer stays within a bounded spread for both the luma and chroma branches. The stage-oriented cases in `stage_regression.rs` and the calibration cases in `calibration.rs` both run below the reference width, so they do not exercise this property on their own.
+Consequence: a given relative spatial frequency is attenuated by the same amount at any output width at or above the reference width, the chroma-versus-luma hierarchy of section `4.4` stays intact instead of flattening as resolution grows, and a high-resolution render no longer reads cleaner than the same content at the reference width.
+
+Regression anchors in `casseted-pipeline`:
+
+- `horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available` renders a fixed relative grating at 720, 2160, and 3600 px wide and asserts the modulation transfer stays within a bounded spread for both branches
+- `reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available` renders a flat field at the same widths and asserts the contamination power carried at a fixed set of cycles-per-frame does not fall away as the raster grows
+
+The stage-oriented cases in `stage_regression.rs` and the calibration cases in `calibration.rs` both run below the reference width, so they do not exercise either property on their own.
+
+Terms still expressed in absolute pixels:
+
+- the per-line contamination and phase terms, which are functions of \(\ell\) only
+- the single-line vertical neighbourhoods used by the chroma vertical blend, dropout concealment, and head-switching band
+
+These are scan-line quantities rather than horizontal ones. Normalizing them needs an explicit reference height in the model, not the width-derived factor used here, so they are deferred. The one exception is the quiet-region probe of section `5.3`, which is an isotropic gradient estimate rather than a scan-line term and currently steps by \(\hat{s}\) on both axes as an approximation.
 
 ## 3. Input And Working Representation
 
@@ -879,7 +894,7 @@ g_C^S = 0.28m_B + 0.18m_E
 
 \[
 \eta_S(x, \ell) = 0.025m_E(\ell)\left(
-\operatorname{hash}(\lfloor 0.25x \rfloor + 191,\; \ell + f + 13) - 0.5
+\operatorname{hash}\left(\left\lfloor \tfrac{0.25x}{\hat{s}} \right\rfloor + 191,\; \ell + f + 13\right) - 0.5
 \right)
 \]
 
@@ -939,13 +954,32 @@ s(t) = t^2(3 - 2t)
 \]
 
 \[
+\kappa' = \frac{\kappa x}{\hat{s}}
+\]
+
+\[
 b(x, \ell; \kappa, \sigma_x, \sigma_y) =
 \operatorname{mix}\left(
-\xi(\lfloor \kappa x \rfloor + \sigma_x,\; \sigma_y\ell + f + 1.37\sigma_x),
-\xi(\lfloor \kappa x \rfloor + \sigma_x + 1,\; \sigma_y\ell + f + 1.37\sigma_x),
-s(\operatorname{fract}(\kappa x))
+\xi(\lfloor \kappa' \rfloor + \sigma_x,\; \sigma_y\ell + f + 1.37\sigma_x),
+\xi(\lfloor \kappa' \rfloor + \sigma_x + 1,\; \sigma_y\ell + f + 1.37\sigma_x),
+s(\operatorname{fract}(\kappa'))
 \right)
 \]
+
+Every \(\kappa\) below is therefore stated in cells per reference pixel, so a band keeps the same number of cycles across the frame at any output width.
+
+The same reasoning applies to the finest noise carrier, which would otherwise sit above the modelled luma bandwidth on a high-resolution raster. It is sampled on the reference-pixel grid and interpolated horizontally:
+
+\[
+\tilde{\xi}(x, y; \sigma) =
+\operatorname{mix}\left(
+\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + \sigma_x,\; y + \sigma_y\right),
+\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + 1 + \sigma_x,\; y + \sigma_y\right),
+s\left(\operatorname{fract}\left(\tfrac{x}{\hat{s}}\right)\right)
+\right)
+\]
+
+At \(\hat{s} = 1\) the fractional part is zero for integer \(x\), so \(\tilde{\xi}(x, y; \sigma) = \xi(x + \sigma_x,\; y + \sigma_y)\) exactly.
 
 Let the final pass reuse the stronger of dropout and head-switching support as one restrained disturbance-backoff term:
 
@@ -958,22 +992,24 @@ For the current quiet-content refinement, the same pass also derives a compact l
 \[
 \nabla_Y =
 \max\left(
-|Y_L^\star - Y_L^\star(x - 1, y)|,
-|Y_L^\star - Y_L^\star(x + 1, y)|,
-|Y_L^\star - Y_L^\star(x, y - 1)|,
-|Y_L^\star - Y_L^\star(x, y + 1)|
+|Y_L^\star - Y_L^\star(x - \hat{s}, y)|,
+|Y_L^\star - Y_L^\star(x + \hat{s}, y)|,
+|Y_L^\star - Y_L^\star(x, y - \hat{s})|,
+|Y_L^\star - Y_L^\star(x, y + \hat{s})|
 \right)
 \]
 
 \[
 \nabla_C =
 \max\left(
-\|C_D^\star - C_D^\star(x - 1, y)\|,
-\|C_D^\star - C_D^\star(x + 1, y)\|,
-\|C_D^\star - C_D^\star(x, y - 1)\|,
-\|C_D^\star - C_D^\star(x, y + 1)\|
+\|C_D^\star - C_D^\star(x - \hat{s}, y)\|,
+\|C_D^\star - C_D^\star(x + \hat{s}, y)\|,
+\|C_D^\star - C_D^\star(x, y - \hat{s})\|,
+\|C_D^\star - C_D^\star(x, y + \hat{s})\|
 \right)
 \]
+
+The thresholds below are calibrated against reference-pixel neighbours, so the probe steps by \(\hat{s}\). Using the width-derived factor on the vertical axis is an isotropic approximation until the model carries an explicit reference height.
 
 \[
 q_Y = 1 - \operatorname{smoothstep}(0.020, 0.110, \nabla_Y)
@@ -1015,7 +1051,7 @@ g_Y = \operatorname{mix}(1.0, 0.72, \gamma_T)
 \[
 n_Y^\star =
 a_Y m_Y g_Y \left(
-0.45(1 - q_L)\xi(x + f,\; y + 3)
+0.45(1 - q_L)\tilde{\xi}(x, y;\, (f, 3))
 + (0.35 + 0.09q_L)b(x, y; 0.12, 11, 0.31)
 + (0.20 - 0.04q_L)\xi(y + 29,\; f + 13)
 + q_L(0.26 + 0.24d_Q)\eta_{YQ}
@@ -1106,7 +1142,7 @@ h_\ell = \operatorname{hash}(\ell + 17,\; f + 5) < q_D
 If the line is active, derive a segment span and center:
 
 \[
-s_\ell = \max(1,\; s_D \cdot \operatorname{mix}(0.6, 1.8, \operatorname{hash}(\ell + 41,\; f + 9)))
+s_\ell = \max(\hat{s},\; s_D \cdot \operatorname{mix}(0.6, 1.8, \operatorname{hash}(\ell + 41,\; f + 9)))
 \]
 
 \[
@@ -1114,7 +1150,7 @@ x_\ell = W \cdot \operatorname{hash}(\ell + 59,\; f + 21)
 \]
 
 \[
-e_\ell = \max(0.75,\; 0.2s_\ell)
+e_\ell = \max(0.75\hat{s},\; 0.2s_\ell)
 \]
 
 \[
@@ -1131,7 +1167,7 @@ m_B(x, \ell) =
 \operatorname{mix}\left(
 0.82,\;
 1.0,\;
-\operatorname{hash}(\lfloor 0.35x \rfloor + \ell,\; f + 37)
+\operatorname{hash}\left(\left\lfloor \tfrac{0.35x}{\hat{s}} \right\rfloor + \ell,\; f + 37\right)
 \right)
 \]
 
@@ -1160,9 +1196,7 @@ m_D(x, \ell)\operatorname{mix}\left(
 
 \[
 \eta_D(x, y) =
-0.08\gamma_D(x, \ell)\left(
-\operatorname{hash}(x, y + 29 + f) - 0.5
-\right)
+0.08\gamma_D(x, \ell)\,\tilde{\xi}(x, y;\, (f, 29))
 \]
 
 \[

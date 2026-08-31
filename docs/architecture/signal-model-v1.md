@@ -413,10 +413,11 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for transport-adjacent reconstruction disturbance and noise/dropout placement; it does not reapply full-frame transport resampling to luma/chroma textures
 - horizontal luma and chroma band limiting is resolved against the reference width, so the same relative spatial frequency is attenuated the same way at any output width at or above 720 px; see the horizontal scale-invariance rules in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)
+- reconstruction contamination follows the same rule: noise band frequencies are stated per reference pixel and the finest noise carrier is sampled on the reference-pixel grid, so a high-resolution render does not read cleaner than the same content at the reference width
 
 Still deferred:
 
-- reference-width normalization of the reconstruction pass: the procedural noise band frequencies, the quiet-region gradient probe, and the vertical single-line neighbourhoods used by chroma vertical blend, dropout concealment, and head switching are still expressed in absolute pixels, so their character remains resolution-dependent even though the luma and chroma band limiting no longer is
+- an explicit reference height in the model, so the remaining scan-line quantities can be normalized: the per-line contamination and phase terms and the single-line vertical neighbourhoods used by chroma vertical blend, dropout concealment, and head switching are still expressed in absolute pixels. The horizontal terms of the reconstruction pass are already resolved against the reference width, so what remains is specifically the vertical axis
 - input-selector-driven runtime branching from `VhsInputSettings.{transfer,temporal_sampling}`
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - temporal model

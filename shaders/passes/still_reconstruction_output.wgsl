@@ -48,6 +48,19 @@ struct QuietRegionProfile {
 @group(0) @binding(2) var signal_sampler: sampler;
 @group(0) @binding(3) var<uniform> effect: EffectUniform;
 
+const REFERENCE_WIDTH_PX: f32 = 720.0;
+
+// Same reference-width factor the luma and chroma branches use. Contamination
+// structure, dropout breakup, and the quiet-region probe are all specified at
+// 720 px wide, so they are resolved against the real frame here instead of
+// being left in absolute output pixels.
+//
+// Clamped at 1.0 for the same reason as the branch passes: the look is defined
+// at the reference width and is scaled up but never down.
+fn reference_scale() -> f32 {
+    return max(effect.frame.x / REFERENCE_WIDTH_PX, 1.0);
+}
+
 // The decode edge uses the same fixed BT.601-like working matrix as the input
 // conditioning pass. `output_transfer` remains deferred after this inverse
 // matrix + clamp step.
@@ -70,14 +83,31 @@ fn centered_hash(p: vec2<f32>) -> f32 {
     return hash12(p) - 0.5;
 }
 
+// `cells_per_px` is stated in cells per reference pixel, so a band keeps the
+// same number of cycles across the frame at any output width.
 fn smooth_noise_x(noise_coord: vec2<f32>, cells_per_px: f32, seed: vec2<f32>) -> f32 {
-    let phase = noise_coord.x * cells_per_px;
+    let phase = noise_coord.x * cells_per_px / reference_scale();
     let cell = floor(phase);
     let blend = fract(phase);
     let smooth_blend = blend * blend * (3.0 - 2.0 * blend);
     let line_phase = noise_coord.y * seed.y + effect.frame.w + seed.x * 1.37;
     let left = centered_hash(vec2<f32>(cell + seed.x, line_phase));
     let right = centered_hash(vec2<f32>(cell + seed.x + 1.0, line_phase));
+    return mix(left, right, smooth_blend);
+}
+
+// Per-pixel hash noise carries no band limit of its own, so above the
+// reference width it would sit finer than the modelled luma bandwidth allows.
+// Sampling it on the reference-pixel grid with horizontal interpolation keeps
+// its relative frequency fixed. At the reference width the interpolation
+// weight is exactly zero, so this reduces to the plain per-pixel hash.
+fn reference_scaled_fine_noise(noise_coord: vec2<f32>, seed: vec2<f32>) -> f32 {
+    let phase = noise_coord.x / reference_scale();
+    let cell = floor(phase);
+    let blend = fract(phase);
+    let smooth_blend = blend * blend * (3.0 - 2.0 * blend);
+    let left = centered_hash(vec2<f32>(cell, noise_coord.y) + seed);
+    let right = centered_hash(vec2<f32>(cell + 1.0, noise_coord.y) + seed);
     return mix(left, right, smooth_blend);
 }
 
@@ -115,11 +145,15 @@ fn quiet_region_profile(
     uv: vec2<f32>,
     signal: ReconstructionSignal,
 ) -> QuietRegionProfile {
-    let inv_size = frame_inv_size();
-    let left = sample_reconstruction_signal(uv - vec2<f32>(inv_size.x, 0.0));
-    let right = sample_reconstruction_signal(uv + vec2<f32>(inv_size.x, 0.0));
-    let up = sample_reconstruction_signal(uv - vec2<f32>(0.0, inv_size.y));
-    let down = sample_reconstruction_signal(uv + vec2<f32>(0.0, inv_size.y));
+    // The gradient thresholds below are calibrated against reference-pixel
+    // neighbours, so the probe steps by the reference-width factor on both
+    // axes. Using the width-derived factor vertically is an isotropic
+    // approximation until the model carries an explicit reference height.
+    let probe_step = frame_inv_size() * reference_scale();
+    let left = sample_reconstruction_signal(uv - vec2<f32>(probe_step.x, 0.0));
+    let right = sample_reconstruction_signal(uv + vec2<f32>(probe_step.x, 0.0));
+    let up = sample_reconstruction_signal(uv - vec2<f32>(0.0, probe_step.y));
+    let down = sample_reconstruction_signal(uv + vec2<f32>(0.0, probe_step.y));
 
     let luma_gradient = max(
         max(abs(signal.luma - left.luma), abs(signal.luma - right.luma)),
@@ -208,7 +242,7 @@ fn apply_head_switching_approximation(
     let chroma_shift_mix = band_mix * 0.28 + seam_mix * 0.18;
     let seam_luma_noise = centered_hash(
         vec2<f32>(
-            floor(noise_coord.x * 0.25) + 191.0,
+            floor(noise_coord.x * 0.25 / reference_scale()) + 191.0,
             noise_coord.y + effect.frame.w + 13.0,
         ),
     ) * seam_mix * 0.025;
@@ -249,7 +283,7 @@ fn sample_reconstruction_contamination(
 
     if (effect.reconstruction_output.x > 1e-5) {
         let luma_visibility = 0.35 + 0.65 * pow(1.0 - clamped_luma, 0.7);
-        let luma_fine = centered_hash(noise_coord + vec2<f32>(frame_index, 3.0));
+        let luma_fine = reference_scaled_fine_noise(noise_coord, vec2<f32>(frame_index, 3.0));
         let luma_band = smooth_noise_x(
             noise_coord + vec2<f32>(0.0, 17.0),
             0.12,
@@ -372,16 +406,20 @@ fn line_dropout_mask(noise_coord: vec2<f32>) -> f32 {
         1.8,
         hash12(vec2<f32>(line_index + 41.0, frame_index + 9.0)),
     );
-    let span_px = max(1.0, mean_span_px * span_scale);
+    let scale = reference_scale();
+    let span_px = max(1.0 * scale, mean_span_px * span_scale);
     let center_px = hash12(vec2<f32>(line_index + 59.0, frame_index + 21.0)) * effect.frame.x;
-    let edge_softness = max(0.75, span_px * 0.2);
+    let edge_softness = max(0.75 * scale, span_px * 0.2);
     let distance_px = abs(noise_coord.x - center_px);
     let segment = 1.0
         - smoothstep(span_px * 0.5, span_px * 0.5 + edge_softness, distance_px);
     let breakup = mix(
         0.82,
         1.0,
-        hash12(vec2<f32>(floor(noise_coord.x * 0.35) + line_index, frame_index + 37.0)),
+        hash12(vec2<f32>(
+            floor(noise_coord.x * 0.35 / scale) + line_index,
+            frame_index + 37.0,
+        )),
     );
     return segment * breakup;
 }
@@ -415,7 +453,7 @@ fn apply_dropout_approximation(
     );
     dropout.dropout_mix = mask * line_strength;
     let dropout_luma_noise =
-        (hash12(noise_coord + vec2<f32>(effect.frame.w, 29.0)) - 0.5)
+        reference_scaled_fine_noise(noise_coord, vec2<f32>(effect.frame.w, 29.0))
             * dropout.dropout_mix
             * 0.08;
     dropout.signal.luma = clamp(
