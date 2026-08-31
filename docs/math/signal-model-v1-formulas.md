@@ -109,6 +109,7 @@ and `08_dark-screen-noise`.
 | \(\ell\) | scan-line index used for line-wise effects | \([0, H - 1]\) |
 | \(f\) | frame index from `FrameDescriptor.frame_index` | integer |
 | \(s_{\text{ref}}\) | reference-width scale | \(W / 720\) |
+| \(\hat{s}\) | clamped reference-width scale used by horizontal spatial constants | \(\max(s_{\text{ref}}, 1)\) |
 
 ### Color and working signal quantities
 
@@ -151,19 +152,19 @@ and `08_dark-screen-noise`.
 | Symbol | Meaning | Current source |
 | --- | --- | --- |
 | \(r_Y\) | resolved luma bandwidth-loss proxy in pixels | `SignalSettings.luma.blur_px * s_ref` |
-| \(\Delta_Y\) | derived luma sample step in pixels | `max(0.5, 0.55 * r_Y + 0.45)` |
-| \(\eta_Y\) | derived luma bandwidth mix | `r_Y / (r_Y + 1.35)` |
+| \(\Delta_Y\) | derived luma sample step in pixels | `max(0.5 * s_hat, 0.55 * r_Y + 0.45 * s_hat)` |
+| \(\eta_Y\) | derived luma bandwidth mix | `(r_Y / s_hat) / ((r_Y / s_hat) + 1.35)` |
 | \(\theta_H\) | resolved highlight-bleed threshold | `clamp(k_h + 0.12, 0.72, 0.96)` |
 | \(\beta_H\) | resolved highlight-bleed amount | `min(0.16, (p_Y / (p_Y + 1.25)) * (0.06 + 0.14 * rho_h / (rho_h + 1)))` |
 | \(r_\tau\) | resolved chroma delay in pixels | `SignalSettings.chroma.offset_px * s_ref` |
 | \(r_C\) | resolved chroma bandwidth-loss proxy in pixels | `SignalSettings.chroma.bleed_px * s_ref` |
-| \(\eta_C\) | derived chroma bandwidth mix | `r_C / (r_C + 1.0)` |
-| \(r_L\) | derived chroma low-pass span | `0.40 + 0.72 * r_C + 0.28 * eta_C` for the bandwidth-loss branch |
-| \(d_C\) | derived chroma reconstruction cell width | `1.0 + 0.52 * r_C + 0.38 * eta_C` |
-| \(\eta_\tau\) | derived delay/bandwidth balance mix for smear | `abs(r_tau) / (abs(r_tau) + 0.5 * r_C + 0.35)` |
-| \(s_C\) | derived chroma cell-integration step | `max(0.35, 0.24 * d_C)` |
+| \(\eta_C\) | derived chroma bandwidth mix | `(r_C / s_hat) / ((r_C / s_hat) + 1.0)` |
+| \(r_L\) | derived chroma low-pass span | `0.40 * s_hat + 0.72 * r_C + 0.28 * s_hat * eta_C` for the bandwidth-loss branch |
+| \(d_C\) | derived chroma reconstruction cell width | `1.0 * s_hat + 0.52 * r_C + 0.38 * s_hat * eta_C` |
+| \(\eta_\tau\) | derived delay/bandwidth balance mix for smear | `abs(r_tau) / (abs(r_tau) + 0.5 * r_C + 0.35 * s_hat)` |
+| \(s_C\) | derived chroma cell-integration step | `max(0.35 * s_hat, 0.24 * d_C)` |
 | \(\alpha_S\) | restrained trailing-smear mix | `clamp(0.08 + 0.14 * eta_C + 0.05 * eta_tau, 0, 0.27)` |
-| \(\gamma_Y\) | local luma-edge guard used to keep chroma subordinate | `clamp(2.8 * max(abs(Y_0 - Y_-), abs(Y_0 - Y_+)), 0, 1)` |
+| \(\gamma_Y\) | local luma-edge guard used to keep chroma subordinate | `clamp(2.8 * max(abs(Y_0 - Y_-), abs(Y_0 - Y_+)), 0, 1)`, sampled at \(\pm\hat{s}\) pixels |
 | \(\beta_N\) | derived chroma vertical-neighbor weight | `0.18 + 0.06 * eta_C` |
 | \(s_D\) | resolved dropout mean span in pixels | `min(48 * s_ref, 13.5 * tau_D * s_ref)` |
 | \(\delta_\phi\) | local chroma phase-noise angle | low-band noise in `sample_reconstruction_contamination()` scaled by `effect.reconstruction_aux.w` |
@@ -196,6 +197,28 @@ and `08_dark-screen-noise`.
 
 Current packing note:
 the compact uniform block now uses `effect.frame = (W, H, b_S, f)`. The shaders derive inverse frame size from `W` and `H`, which frees one shared lane for the model-only head-switching band while keeping the frame index in the shared frame block.
+
+### Horizontal Scale Invariance
+
+The still path states every horizontal spatial quantity in reference pixels at 720 px wide, then resolves it against the real frame.
+
+Two kinds of term appear in the same expressions:
+
+- terms already scaled on the CPU side, such as \(r_Y\) and \(r_C\), which arrive multiplied by \(s_{\text{ref}}\)
+- fixed constants written directly in the discrete formulas, such as the `0.45` in \(\Delta_Y\), the `1.35` in \(\eta_Y\), and the leading `1.0` in \(d_C\)
+
+Both kinds are in pixels, so mixing them without a common scale silently makes the resolved filter shape depend on frame width. Because the shaders derive \(\hat{s}\) from `effect.frame.x`, no uniform lane is needed to carry it.
+
+Rules currently enforced:
+
+- constants inside horizontal spatial terms are multiplied by \(\hat{s}\)
+- saturating mixes, \(\eta_Y\) and \(\eta_C\), are evaluated on the reference-pixel radius \(r / \hat{s}\), so attenuation strength tracks the modelled bandwidth rather than the output raster
+- \(\hat{s}\) is clamped at `1.0`: the look is defined at the reference width, and below it the raster is already the narrower limit, so the calibration is scaled up but never down
+
+Consequence: a given relative spatial frequency is attenuated by the same amount at any output width at or above the reference width, and the chroma-versus-luma hierarchy of section `4.4` stays intact instead of flattening as resolution grows.
+
+Regression anchor:
+`horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available` in `casseted-pipeline` renders a fixed relative grating at 720, 2160, and 3600 px wide and asserts that the measured modulation transfer stays within a bounded spread for both the luma and chroma branches. The stage-oriented cases in `stage_regression.rs` and the calibration cases in `calibration.rs` both run below the reference width, so they do not exercise this property on their own.
 
 ## 3. Input And Working Representation
 
@@ -347,16 +370,20 @@ x + \{-3\Delta_Y, -2\Delta_Y, -\Delta_Y, 0, \Delta_Y, 2\Delta_Y, 3\Delta_Y\}
 where:
 
 \[
-\Delta_Y = \max(0.5,\; 0.55r_Y + 0.45)
+\Delta_Y = \max(0.5\hat{s},\; 0.55r_Y + 0.45\hat{s})
 \]
 
 and:
 
 \[
 r_Y = s_{\text{ref}} \cdot p_Y
+\qquad
+\hat{s} = \max(s_{\text{ref}}, 1)
 \]
 
 with \(p_Y = \texttt{SignalSettings.luma.blur\_px}\).
+
+Every additive constant in the horizontal spatial terms is stated in reference pixels and is carried by \(\hat{s}\). Without that, the fixed constants would stay in absolute pixels while \(r_Y\) grew with frame width, so the resolved filter shape — and with it the calibrated look — would drift as soon as the pipeline ran above the reference width.
 
 The broad low-pass baseline is:
 
@@ -373,10 +400,10 @@ M_Y =
 0.10Y_{-2} + 0.22Y_{-1} + 0.36Y_0 + 0.22Y_{+1} + 0.10Y_{+2}
 \]
 
-The luma bandwidth-loss mix is:
+The luma bandwidth-loss mix is derived from the reference-pixel radius, so the attenuation strength stays tied to the modelled bandwidth instead of to the output raster:
 
 \[
-\eta_Y = \frac{r_Y}{r_Y + 1.35}
+\eta_Y = \frac{r_Y / \hat{s}}{(r_Y / \hat{s}) + 1.35}
 \]
 
 The pre/de-emphasis projection is still:
@@ -531,31 +558,33 @@ with the same optional vertical line blend and final saturation scaling. This ke
 For the bandwidth-loss branch \(r_C > \varepsilon\), derive:
 
 \[
-\eta_C = \frac{r_C}{r_C + 1}
+\eta_C = \frac{r_C / \hat{s}}{(r_C / \hat{s}) + 1}
 \qquad
-\eta_\tau = \frac{|r_\tau|}{|r_\tau| + 0.5r_C + 0.35}
+\eta_\tau = \frac{|r_\tau|}{|r_\tau| + 0.5r_C + 0.35\hat{s}}
 \]
 
 \[
-r_L = 0.40 + 0.72r_C + 0.28\eta_C
+r_L = 0.40\hat{s} + 0.72r_C + 0.28\hat{s}\eta_C
 \qquad
-d_C = 1 + 0.52r_C + 0.38\eta_C
+d_C = \hat{s} + 0.52r_C + 0.38\hat{s}\eta_C
 \]
 
 \[
-s_C = \max(0.35,\; 0.24d_C)
+s_C = \max(0.35\hat{s},\; 0.24d_C)
 \qquad
 \alpha_S = \operatorname{clamp}\left(0.08 + 0.14\eta_C + 0.05\eta_\tau, 0, 0.27\right)
 \]
 
+The coarse cell width \(d_C\) is the term that most visibly depends on this: it sets how much horizontal chroma resolution survives, so leaving its constant in absolute pixels would make chroma progressively sharper — not softer — as frame width grew.
+
 Horizontal chroma prefilter:
 
 \[
-\Delta_n = \max(0.45, 0.42r_L + 0.30)
+\Delta_n = \max(0.45\hat{s}, 0.42r_L + 0.30\hat{s})
 \qquad
-\Delta_m = \max(\Delta_n + 0.55, 0.95r_L + 0.55)
+\Delta_m = \max(\Delta_n + 0.55\hat{s}, 0.95r_L + 0.55\hat{s})
 \qquad
-\Delta_f = \max(\Delta_m + 0.65, 1.55r_L + 0.85)
+\Delta_f = \max(\Delta_m + 0.65\hat{s}, 1.55r_L + 0.85\hat{s})
 \]
 
 \[
@@ -625,8 +654,8 @@ To keep the chroma branch subordinate to the refined luma branch, the current sh
 \[
 \gamma_Y(x, y) = \operatorname{clamp}\left(
 2.8 \max\left(
-|Y(x, y) - Y(x - 1, y)|,\;
-|Y(x, y) - Y(x + 1, y)|
+|Y(x, y) - Y(x - \hat{s}, y)|,\;
+|Y(x, y) - Y(x + \hat{s}, y)|
 \right),
 0,
 1

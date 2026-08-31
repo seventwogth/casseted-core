@@ -412,9 +412,11 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - reconstruction back to RGB from a head-switching-conditioned, dropout-conditioned `Y/C` signal with brightness-shaped luma contamination, softer chroma contamination, a local quiet-region profile that slightly boosts line/band-carried low-amplitude character on calm surfaces and dark floors, restrained line-segment dropout handling, restrained local chroma-phase noise, and restrained Y/C leakage that now backs off slightly inside active transport/dropout disturbance
 - line jitter and vertical offset kept as integrated but restrained input-conditioning terms
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for transport-adjacent reconstruction disturbance and noise/dropout placement; it does not reapply full-frame transport resampling to luma/chroma textures
+- horizontal luma and chroma band limiting is resolved against the reference width, so the same relative spatial frequency is attenuated the same way at any output width at or above 720 px; see the horizontal scale-invariance rules in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)
 
 Still deferred:
 
+- reference-width normalization of the reconstruction pass: the procedural noise band frequencies, the quiet-region gradient probe, and the vertical single-line neighbourhoods used by chroma vertical blend, dropout concealment, and head switching are still expressed in absolute pixels, so their character remains resolution-dependent even though the luma and chroma band limiting no longer is
 - input-selector-driven runtime branching from `VhsInputSettings.{transfer,temporal_sampling}`
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - temporal model

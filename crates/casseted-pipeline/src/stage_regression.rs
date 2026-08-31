@@ -11,6 +11,20 @@ use std::path::PathBuf;
 const REFERENCE_WIDTH: u32 = 96;
 const REFERENCE_HEIGHT: u32 = 64;
 const REFERENCE_SCALE: f32 = REFERENCE_WIDTH as f32 / 720.0;
+// Horizontal bandwidth loss is specified in reference pixels at 720 px wide and
+// is scaled to the real frame through `s_ref`. These constants drive the
+// resolution-invariance check: the same relative grating must be attenuated by
+// the same amount at every output width, so the calibrated look does not drift
+// once the pipeline runs above the reference width.
+const GRATING_WIDTHS: [u32; 3] = [720, 2160, 3600];
+const GRATING_HEIGHT: u32 = 48;
+const GRATING_CYCLES_PER_FRAME: f32 = 80.0;
+const GRATING_ROW_MARGIN: u32 = 8;
+const GRATING_LUMA_AMPLITUDE: f32 = 0.235;
+const GRATING_CHROMA_RED_AMPLITUDE: f32 = 0.20;
+// Keeps the chroma grating at constant luma: 0.299 * dR + 0.587 * dG = 0.
+const GRATING_CHROMA_GREEN_AMPLITUDE: f32 = 0.1018;
+const RESOLUTION_INVARIANCE_TOLERANCE: f32 = 0.10;
 const CURRENT_REFERENCE_BUCKETS: [&str; 8] = [
     "01_target-look",
     "02_highlights-specular",
@@ -584,6 +598,113 @@ fn neutral_reference_model() -> VhsModel {
     model
 }
 
+fn bandwidth_reference_model() -> VhsModel {
+    // Isolate horizontal bandwidth loss: tone, transport, noise, dropout, and
+    // decode terms stay neutral so only the luma/chroma band limiting shapes
+    // the measured grating response.
+    let mut model = neutral_reference_model();
+    model.luma.bandwidth_mhz = 2.325;
+    model.chroma.bandwidth_khz = 100.0;
+    model
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GratingBand {
+    Luma,
+    Chroma,
+}
+
+impl GratingBand {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Luma => "luma",
+            Self::Chroma => "chroma",
+        }
+    }
+
+    fn column_range(self, width: u32) -> (u32, u32) {
+        let split = width / 2;
+        match self {
+            Self::Luma => (0, split),
+            Self::Chroma => (split, width),
+        }
+    }
+}
+
+fn quantize_unorm8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+// One frame carrying both probes: a luma-only grating on the left half and a
+// constant-luma chroma grating on the right half, each at the same relative
+// frequency regardless of frame width.
+fn horizontal_grating_image(width: u32) -> ImageFrame {
+    let size = FrameSize::new(width, GRATING_HEIGHT);
+    let split = width / 2;
+    let mut data = Vec::with_capacity(size.pixels() as usize * 4);
+
+    for _ in 0..size.height {
+        for x in 0..width {
+            let phase = std::f32::consts::TAU * GRATING_CYCLES_PER_FRAME * x as f32 / width as f32;
+            let wave = phase.sin();
+            let pixel = if x < split {
+                let level = quantize_unorm8(0.5 + GRATING_LUMA_AMPLITUDE * wave);
+                [level, level, level, 255]
+            } else {
+                [
+                    quantize_unorm8(0.5 + GRATING_CHROMA_RED_AMPLITUDE * wave),
+                    quantize_unorm8(0.5 - GRATING_CHROMA_GREEN_AMPLITUDE * wave),
+                    quantize_unorm8(0.5),
+                    255,
+                ]
+            };
+            data.extend_from_slice(&pixel);
+        }
+    }
+
+    ImageFrame::rgba8(size, data).expect("generated grating image should be valid")
+}
+
+fn sample_luma_and_chroma_v(frame: &ImageFrame, x: u32, y: u32) -> (f32, f32) {
+    let width = frame.descriptor.size.width as usize;
+    let index = (y as usize * width + x as usize) * 4;
+    let red = frame.data[index] as f32 / 255.0;
+    let green = frame.data[index + 1] as f32 / 255.0;
+    let blue = frame.data[index + 2] as f32 / 255.0;
+    let luma = 0.299 * red + 0.587 * green + 0.114 * blue;
+    (luma, (red - luma) * 0.877_283)
+}
+
+// Single-bin DFT at the grating frequency: robust to sub-pixel sampling phase
+// in a way that a direct edge-width measurement is not.
+fn modulation_transfer(frame: &ImageFrame, band: GratingBand) -> f32 {
+    let width = frame.descriptor.size.width;
+    let height = frame.descriptor.size.height;
+    let (start, end) = band.column_range(width);
+    let sample_count = (end - start) as f32;
+    let mut total = 0.0;
+    let mut rows = 0;
+
+    for y in GRATING_ROW_MARGIN..height - GRATING_ROW_MARGIN {
+        let mut cosine_sum = 0.0;
+        let mut sine_sum = 0.0;
+        for x in start..end {
+            let (luma, chroma_v) = sample_luma_and_chroma_v(frame, x, y);
+            let value = match band {
+                GratingBand::Luma => luma,
+                GratingBand::Chroma => chroma_v,
+            };
+            let phase = std::f32::consts::TAU * GRATING_CYCLES_PER_FRAME * x as f32 / width as f32;
+            cosine_sum += value * phase.cos();
+            sine_sum += value * phase.sin();
+        }
+        total += 2.0 * (cosine_sum / sample_count).hypot(sine_sum / sample_count);
+        rows += 1;
+    }
+
+    total / rows as f32
+}
+
 fn reference_size() -> FrameSize {
     FrameSize::new(REFERENCE_WIDTH, REFERENCE_HEIGHT)
 }
@@ -720,12 +841,14 @@ fn default_pipeline_matches_compiled_runtime_on_reference_bucket_corpus_when_gpu
         for image_path in reference_bucket_pngs(bucket) {
             let input = load_png(&image_path, 0)
                 .unwrap_or_else(|error| panic!("{} should load: {error}", image_path.display()));
-            let direct = pipeline.process_with_gpu(&gpu, &input).unwrap_or_else(|error| {
-                panic!(
-                    "{} should render on the direct GPU path: {error}",
-                    image_path.display()
-                )
-            });
+            let direct = pipeline
+                .process_with_gpu(&gpu, &input)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} should render on the direct GPU path: {error}",
+                        image_path.display()
+                    )
+                });
             let reused = pipeline
                 .process_with_runtime(&runtime, &input)
                 .unwrap_or_else(|error| {
@@ -737,7 +860,8 @@ fn default_pipeline_matches_compiled_runtime_on_reference_bucket_corpus_when_gpu
             let diff = image_diff_stats(&input, &direct);
 
             assert_eq!(
-                direct, reused,
+                direct,
+                reused,
                 "{} runtime output drifted",
                 image_path.display()
             );
@@ -747,6 +871,49 @@ fn default_pipeline_matches_compiled_runtime_on_reference_bucket_corpus_when_gpu
                 image_path.display()
             );
         }
+    }
+}
+
+#[test]
+fn horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available() {
+    let gpu = match try_gpu_context() {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+    let pipeline = StillImagePipeline::from_vhs_model(bandwidth_reference_model());
+
+    for band in [GratingBand::Luma, GratingBand::Chroma] {
+        let responses: Vec<f32> = GRATING_WIDTHS
+            .iter()
+            .map(|&width| {
+                let input = horizontal_grating_image(width);
+                let output = pipeline
+                    .process_with_gpu(&gpu, &input)
+                    .unwrap_or_else(|error| {
+                        panic!("{width}px {} grating should render: {error}", band.label())
+                    });
+                modulation_transfer(&output, band)
+            })
+            .collect();
+
+        let lowest = responses.iter().copied().fold(f32::INFINITY, f32::min);
+        let highest = responses.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mean = responses.iter().sum::<f32>() / responses.len() as f32;
+        assert!(
+            mean > 1e-4,
+            "{} grating response collapsed to zero across {GRATING_WIDTHS:?}",
+            band.label(),
+        );
+
+        let spread = (highest - lowest) / mean;
+        assert!(
+            spread <= RESOLUTION_INVARIANCE_TOLERANCE,
+            "{} bandwidth response drifted {spread} across widths {GRATING_WIDTHS:?} \
+             (tolerance {RESOLUTION_INVARIANCE_TOLERANCE}, measured {responses:?}); horizontal \
+             spatial constants must be expressed in reference pixels and scaled by s_ref",
+            band.label(),
+        );
     }
 }
 

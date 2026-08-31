@@ -16,6 +16,8 @@ struct VsOutput {
 @group(0) @binding(1) var working_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
 
+const REFERENCE_WIDTH_PX: f32 = 720.0;
+
 fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     let clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     return textureSample(working_texture, working_sampler, clamped).rgb;
@@ -42,22 +44,39 @@ fn sample_luma_px(pixel_pos: vec2<f32>) -> f32 {
     return sample_working_signal(uv).x;
 }
 
+// Horizontal spatial terms reach this pass already multiplied by the
+// reference-width factor `s_ref = W / 720`. Every fixed constant below is
+// stated in reference pixels and is re-scaled through `reference_scale()`, so
+// the coarse chroma grid keeps the same relative width above the reference
+// width instead of turning finer as frame width grows.
+//
+// The factor is clamped at 1.0 on purpose: the look is defined at the
+// reference width, and below it the raster itself is already the narrower
+// limit, so the still path keeps the reference-width shape instead of scaling
+// the calibration down.
+fn reference_scale() -> f32 {
+    return max(effect.frame.x / REFERENCE_WIDTH_PX, 1.0);
+}
+
 fn bandwidth_mix(blur_px: f32) -> f32 {
-    return blur_px / (blur_px + 1.0);
+    let reference_blur_px = blur_px / reference_scale();
+    return reference_blur_px / (reference_blur_px + 1.0);
 }
 
 fn local_luma_edge(pixel_pos: vec2<f32>) -> f32 {
-    let left = sample_luma_px(pixel_pos - vec2<f32>(1.0, 0.0));
+    let edge_step_px = reference_scale();
+    let left = sample_luma_px(pixel_pos - vec2<f32>(edge_step_px, 0.0));
     let center = sample_luma_px(pixel_pos);
-    let right = sample_luma_px(pixel_pos + vec2<f32>(1.0, 0.0));
+    let right = sample_luma_px(pixel_pos + vec2<f32>(edge_step_px, 0.0));
     let edge_energy = max(abs(center - left), abs(center - right));
     return clamp(edge_energy * 2.8, 0.0, 1.0);
 }
 
 fn lowpass_chroma_line(pixel_pos: vec2<f32>, span_px: f32) -> vec2<f32> {
-    let near_step_px = max(0.45, span_px * 0.42 + 0.30);
-    let mid_step_px = max(near_step_px + 0.55, span_px * 0.95 + 0.55);
-    let far_step_px = max(mid_step_px + 0.65, span_px * 1.55 + 0.85);
+    let scale = reference_scale();
+    let near_step_px = max(0.45 * scale, span_px * 0.42 + 0.30 * scale);
+    let mid_step_px = max(near_step_px + 0.55 * scale, span_px * 0.95 + 0.55 * scale);
+    let far_step_px = max(mid_step_px + 0.65 * scale, span_px * 1.55 + 0.85 * scale);
     let left_far = sample_chroma_px(pixel_pos - vec2<f32>(far_step_px, 0.0));
     let left_mid = sample_chroma_px(pixel_pos - vec2<f32>(mid_step_px, 0.0));
     let left_near = sample_chroma_px(pixel_pos - vec2<f32>(near_step_px, 0.0));
@@ -75,7 +94,7 @@ fn lowpass_chroma_line(pixel_pos: vec2<f32>, span_px: f32) -> vec2<f32> {
 }
 
 fn sample_chroma_cell(pixel_pos: vec2<f32>, span_px: f32, cell_size_px: f32) -> vec2<f32> {
-    let integration_step_px = max(0.35, cell_size_px * 0.24);
+    let integration_step_px = max(0.35 * reference_scale(), cell_size_px * 0.24);
     let left = lowpass_chroma_line(
         pixel_pos - vec2<f32>(integration_step_px, 0.0),
         span_px * 1.02,
@@ -182,10 +201,12 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
         return rotate_chroma(chroma_resolved, phase_error_rad) * effect.chroma_degradation.z;
     }
 
+    let scale = reference_scale();
     let chroma_bandwidth_mix = bandwidth_mix(chroma_blur_px);
-    let delay_mix = abs(chroma_offset_px) / (abs(chroma_offset_px) + chroma_blur_px * 0.5 + 0.35);
-    let lowpass_span_px = 0.40 + chroma_blur_px * 0.72 + chroma_bandwidth_mix * 0.28;
-    let cell_size_px = 1.0 + chroma_blur_px * 0.52 + chroma_bandwidth_mix * 0.38;
+    let delay_mix =
+        abs(chroma_offset_px) / (abs(chroma_offset_px) + chroma_blur_px * 0.5 + 0.35 * scale);
+    let lowpass_span_px = 0.40 * scale + chroma_blur_px * 0.72 + chroma_bandwidth_mix * 0.28 * scale;
+    let cell_size_px = 1.0 * scale + chroma_blur_px * 0.52 + chroma_bandwidth_mix * 0.38 * scale;
     let smear_amount = clamp(0.08 + chroma_bandwidth_mix * 0.14 + delay_mix * 0.05, 0.0, 0.27);
     let vertical_neighbor_weight = mix(0.18, 0.24, chroma_bandwidth_mix);
     let vertical_center_weight = 1.0 - vertical_neighbor_weight * 2.0;

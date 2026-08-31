@@ -16,6 +16,8 @@ struct VsOutput {
 @group(0) @binding(1) var working_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
 
+const REFERENCE_WIDTH_PX: f32 = 720.0;
+
 fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     let clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     return textureSample(working_texture, working_sampler, clamped).rgb;
@@ -33,8 +35,23 @@ fn highlight_mask(value: f32, threshold: f32) -> f32 {
     return clamp((value - threshold) / headroom, 0.0, 1.0);
 }
 
+// Horizontal spatial terms reach this pass already multiplied by the
+// reference-width factor `s_ref = W / 720`. Every fixed constant below is
+// stated in reference pixels and is re-scaled through `reference_scale()`, so
+// the resolved filter shape stays identical above the reference width instead
+// of drifting with frame width.
+//
+// The factor is clamped at 1.0 on purpose: the look is defined at the
+// reference width, and below it the raster itself is already the narrower
+// limit, so the still path keeps the reference-width shape instead of scaling
+// the calibration down.
+fn reference_scale() -> f32 {
+    return max(effect.frame.x / REFERENCE_WIDTH_PX, 1.0);
+}
+
 fn bandwidth_mix(blur_px: f32) -> f32 {
-    return blur_px / (blur_px + 1.35);
+    let reference_blur_px = blur_px / reference_scale();
+    return reference_blur_px / (reference_blur_px + 1.35);
 }
 
 fn detail_recovery_mix() -> f32 {
@@ -72,7 +89,8 @@ fn degrade_luma(uv: vec2<f32>) -> f32 {
     }
 
     let inv_size = frame_inv_size();
-    let sample_step_px = max(0.5, blur_px * 0.55 + 0.45);
+    let scale = reference_scale();
+    let sample_step_px = max(0.5 * scale, blur_px * 0.55 + 0.45 * scale);
     let sample_step = vec2<f32>(sample_step_px * inv_size.x, 0.0);
     let left_far = sample_working_signal(uv - sample_step * 3.0).x;
     let left_outer = sample_working_signal(uv - sample_step * 2.0).x;
