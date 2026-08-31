@@ -457,7 +457,7 @@ impl StageReferenceCase {
                 );
                 assert_approx_eq(
                     stages.chroma_degradation.blur_px,
-                    (7.0 / 3.0) * REFERENCE_SCALE,
+                    (700.0 / 220.0) * REFERENCE_SCALE,
                     "chroma_degradation.blur_px",
                 );
                 assert_approx_eq(

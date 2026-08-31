@@ -62,7 +62,7 @@ Current stage-oriented synthetic cases:
 | Input conditioning / tone shaping | deterministic in-memory reference card | `4.1`, `5.1` | `effect.input_conditioning` | `k_h = 0.64`, `rho_h = 0.62`, `p_J = 0.35 * s_ref`, `delta_V = 0.25` |
 | Luma/chroma transform | deterministic in-memory reference card | `4.2` | none beyond the shared frame block; this is the neutral transform case for the fused `RGB -> YUV -> RGB` working path | neutral controls via `StillImagePipeline::new(SignalSettings::neutral())` |
 | Luma degradation | deterministic in-memory reference card | `4.3` | `effect.luma_degradation` | `r_Y = 1.92 * s_ref`, `alpha_p = 0.045`, `theta_H = 0.96`, `beta_H = 0.0363`; the shader derives low/mid/fine-band luma attenuation from that compact state |
-| Chroma degradation | deterministic in-memory reference card | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 2.333 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
+| Chroma degradation | deterministic in-memory reference card | `4.4` | `effect.chroma_degradation` | `r_tau = 0.432 * s_ref`, `r_C = 3.182 * s_ref`, `g_C = 0.94`, `beta_V = 0.35` |
 | Reconstruction / output | deterministic in-memory reference card | `4.5`, `5.2`, `5.3`, `5.4` | `effect.reconstruction_output`, `effect.reconstruction_aux` | `a_Y = 0.018`, `a_C = 0.0077`, `epsilon_YC = 0.04`, `b_S = 0`, `r_S = 0`, `q_D = 0.06`, `s_D = 3.24`, `f = 0` |
 
 Current bucketized calibration corpus:
@@ -470,6 +470,12 @@ L_Y^{\leftarrow} =
 \bar{L}_Y = (1 - \lambda_H)L_Y + \lambda_H L_Y^{\leftarrow}
 \]
 
+The finest band needs an upper edge that is itself band-limited. A narrow three-tap supplies it:
+
+\[
+F_Y = 0.10Y_{-1} + 0.80Y_0 + 0.10Y_{+1}
+\]
+
 The residual bands are then:
 
 \[
@@ -477,8 +483,12 @@ D_M = M_Y - \bar{L}_Y
 \]
 
 \[
-D_F = Y_0 - M_Y
+D_F = F_Y - M_Y
 \]
+
+Taking \(D_F\) as a difference of two low-passes rather than as \(Y_0 - M_Y\) is what gives the luma path a stopband. \(Y_0\) is a single unfiltered sample carrying every frequency up to Nyquist, so the earlier form never let the band vanish: as \(M_Y\)'s response oscillated toward zero the band tended toward the raw signal, and the pass response tended toward \(g_F\) — roughly `0.56` at default settings — instead of rolling off. Measured at the reference raster, the response used to flatten near `0.58` and then rise back to `0.63` at a three-pixel period, so the finest detail survived better than detail one step coarser.
+
+The three-tap weighting is restrained on purpose. A full band-pass, \(0.25, 0.50, 0.25\), deepens the stopband further but softens luma past the point where chroma stays subordinate on low-saturation content: the coarse chroma cell reconstruction of section `4.4` puts a floor under chroma edge energy, and luma must stay above it for the signal-first hierarchy to hold.
 
 with gains:
 
@@ -574,6 +584,14 @@ r_\tau = s_{\text{ref}} \cdot p_\tau
 \qquad
 r_C = s_{\text{ref}} \cdot p_C
 \]
+
+where \(p_C\) comes from `chroma_bleed_from_bandwidth()`:
+
+\[
+p_C = \min\left(\frac{\max(1000 - b_C, 0)}{220},\; 4.5\right)
+\]
+
+The divisor is a calibration constant, not a physical one. It was tightened from `300` so that chroma keeps its margin below luma after the luma stopband of section `4.3` was introduced; softening one branch without the other narrows the hierarchy the whole model rests on.
 
 where:
 

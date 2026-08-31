@@ -446,7 +446,7 @@ fn luma_blur_from_bandwidth(bandwidth_mhz: f32) -> f32 {
 }
 
 fn chroma_bleed_from_bandwidth(bandwidth_khz: f32) -> f32 {
-    (((REFERENCE_CHROMA_BANDWIDTH_KHZ - bandwidth_khz).max(0.0)) / 300.0).min(4.5)
+    (((REFERENCE_CHROMA_BANDWIDTH_KHZ - bandwidth_khz).max(0.0)) / 220.0).min(4.5)
 }
 
 fn luma_noise_amount_from_sigma(luma_sigma: f32) -> f32 {

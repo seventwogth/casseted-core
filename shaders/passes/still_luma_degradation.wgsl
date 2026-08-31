@@ -121,7 +121,19 @@ fn degrade_luma(uv: vec2<f32>) -> f32 {
         * (1.0 - bright_gate * (0.10 + bandwidth_mix(blur_px) * 0.08));
     let edge_gain = clamp(1.0 - bandwidth_mix(blur_px) * (0.46 - detail_mix * 0.20), 0.30, 1.0);
     let edge_band = mid_luma - band_limited_luma;
-    let micro_band = center - mid_luma;
+    // Upper edge of the finest detail band. Taking the band as `fine - mid`
+    // rather than `center - mid` gives the luma path a stopband: `center`
+    // carries every frequency up to Nyquist, so the older form reintroduced
+    // the raw signal at full amplitude and the response asymptoted to
+    // `micro_gain` instead of rolling off.
+    //
+    // The weight is restrained deliberately. A full band-pass deepens the
+    // stopband further but softens luma past the point where chroma stays
+    // subordinate on low-saturation content, because the coarse chroma cell
+    // reconstruction puts a floor under chroma edge energy that luma can then
+    // fall below.
+    let fine_luma = left_inner * 0.10 + center * 0.80 + right_inner * 0.10;
+    let micro_band = fine_luma - mid_luma;
     let base_luma = clamp(
         band_limited_luma + edge_band * edge_gain + micro_band * micro_gain,
         0.0,
