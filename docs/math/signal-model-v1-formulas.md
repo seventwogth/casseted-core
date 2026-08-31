@@ -226,7 +226,7 @@ Regression anchors in `casseted-pipeline`:
 - `horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available` renders a fixed relative grating at 720, 2160, and 3600 px wide and asserts the modulation transfer stays within a bounded spread for both branches
 - `reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available` renders a flat field at the same widths and asserts the contamination power carried at a fixed set of cycles-per-frame does not fall away as the raster grows
 
-The stage-oriented cases in `stage_regression.rs` and the calibration cases in `calibration.rs` both run below the reference width, so they do not exercise either property on their own.
+The stage-oriented cases in `stage_regression.rs` still run below the reference width and do not exercise either property. The calibration cases in `calibration.rs` now run at the reference width, so they observe the calibrated regime itself, but they render at a single width and therefore cannot see drift either.
 
 Terms still expressed in absolute pixels:
 

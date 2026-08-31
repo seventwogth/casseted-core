@@ -169,7 +169,7 @@ Current testing is intentionally lightweight:
 - GPU smoke tests for the still-image pipeline
 - a CLI smoke test that reads a PNG, runs the pipeline, and writes a PNG
 - synthetic stage regression coverage for resolved defaults and bounded perturbations on a deterministic in-memory reference card
-- synthetic calibration coverage for representative still-image classes:
+- synthetic calibration coverage at the reference width, scored with a squared-gradient edge-retention metric so bandwidth loss is measured rather than added contamination, for representative still-image classes:
   colored edges,
   portrait-like midtones,
   bright highlights,

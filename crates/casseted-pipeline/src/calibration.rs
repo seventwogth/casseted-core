@@ -3,9 +3,13 @@ use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_testing::assert_images_not_identical;
 use casseted_types::{FrameSize, ImageFrame};
 
+// The calibration corpus runs at the reference width. Below it the horizontal
+// spatial terms are sub-pixel and the branch filters are close to inactive, so
+// a smaller frame would exercise the chain outside the regime the look is
+// actually calibrated for.
 const CALIBRATION_SIZE: FrameSize = FrameSize {
-    width: 160,
-    height: 120,
+    width: 720,
+    height: 540,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,12 +49,18 @@ struct CalibrationMetrics {
 }
 
 impl CalibrationMetrics {
+    // Edge energy is the mean *squared* horizontal step, not the mean absolute
+    // one. Total variation is conserved when a monotonic edge is blurred, so an
+    // absolute-difference ratio cannot see bandwidth loss on step-like content
+    // and instead tracks whatever contamination the final pass adds. Squared
+    // gradient energy falls as an edge spreads, which is the property these
+    // ratios are meant to report.
     fn luma_edge_retention(self) -> f32 {
-        self.output_luma_edge_energy / self.input_luma_edge_energy.max(1e-5)
+        self.output_luma_edge_energy / self.input_luma_edge_energy.max(1e-9)
     }
 
     fn chroma_edge_retention(self) -> f32 {
-        self.output_chroma_edge_energy / self.input_chroma_edge_energy.max(1e-5)
+        self.output_chroma_edge_energy / self.input_chroma_edge_energy.max(1e-9)
     }
 }
 
@@ -141,7 +151,7 @@ impl CalibrationCase {
             }
             Self::UiDetailEdges => {
                 assert!(
-                    metrics.luma_edge_retention() > 0.45,
+                    metrics.luma_edge_retention() > 0.20,
                     "{} should preserve enough luma structure to avoid mush",
                     self.key()
                 );
@@ -248,17 +258,38 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
                 let input_up_yuv = sample_yuv(input, width, x, y - 1);
                 let input_down_yuv = sample_yuv(input, width, x, y + 1);
                 let quiet_luma_gradient = f32::max(
-                    f32::max((input_yuv.0 - input_left_yuv.0).abs(), (input_yuv.0 - input_right_yuv.0).abs()),
-                    f32::max((input_yuv.0 - input_up_yuv.0).abs(), (input_yuv.0 - input_down_yuv.0).abs()),
+                    f32::max(
+                        (input_yuv.0 - input_left_yuv.0).abs(),
+                        (input_yuv.0 - input_right_yuv.0).abs(),
+                    ),
+                    f32::max(
+                        (input_yuv.0 - input_up_yuv.0).abs(),
+                        (input_yuv.0 - input_down_yuv.0).abs(),
+                    ),
                 );
                 let quiet_chroma_gradient = f32::max(
                     f32::max(
-                        chroma_distance(input_yuv.1, input_yuv.2, input_left_yuv.1, input_left_yuv.2),
-                        chroma_distance(input_yuv.1, input_yuv.2, input_right_yuv.1, input_right_yuv.2),
+                        chroma_distance(
+                            input_yuv.1,
+                            input_yuv.2,
+                            input_left_yuv.1,
+                            input_left_yuv.2,
+                        ),
+                        chroma_distance(
+                            input_yuv.1,
+                            input_yuv.2,
+                            input_right_yuv.1,
+                            input_right_yuv.2,
+                        ),
                     ),
                     f32::max(
                         chroma_distance(input_yuv.1, input_yuv.2, input_up_yuv.1, input_up_yuv.2),
-                        chroma_distance(input_yuv.1, input_yuv.2, input_down_yuv.1, input_down_yuv.2),
+                        chroma_distance(
+                            input_yuv.1,
+                            input_yuv.2,
+                            input_down_yuv.1,
+                            input_down_yuv.2,
+                        ),
                     ),
                 );
                 let is_quiet_region = quiet_luma_gradient < 0.035 && quiet_chroma_gradient < 0.024;
@@ -282,15 +313,17 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
             if x + 1 < width {
                 let input_right_yuv = sample_yuv(input, width, x + 1, y);
                 let output_right_yuv = sample_yuv(output, width, x + 1, y);
-                input_luma_edge_energy += (input_yuv.0 - input_right_yuv.0).abs();
-                output_luma_edge_energy += (output_yuv.0 - output_right_yuv.0).abs();
-                input_chroma_edge_energy += chroma_distance(
+                let input_luma_step = input_yuv.0 - input_right_yuv.0;
+                let output_luma_step = output_yuv.0 - output_right_yuv.0;
+                input_luma_edge_energy += input_luma_step * input_luma_step;
+                output_luma_edge_energy += output_luma_step * output_luma_step;
+                input_chroma_edge_energy += chroma_distance_squared(
                     input_yuv.1,
                     input_yuv.2,
                     input_right_yuv.1,
                     input_right_yuv.2,
                 );
-                output_chroma_edge_energy += chroma_distance(
+                output_chroma_edge_energy += chroma_distance_squared(
                     output_yuv.1,
                     output_yuv.2,
                     output_right_yuv.1,
@@ -341,9 +374,13 @@ fn calibration_metrics(input: &ImageFrame, output: &ImageFrame) -> CalibrationMe
 }
 
 fn chroma_distance(u0: f32, v0: f32, u1: f32, v1: f32) -> f32 {
+    chroma_distance_squared(u0, v0, u1, v1).sqrt()
+}
+
+fn chroma_distance_squared(u0: f32, v0: f32, u1: f32, v1: f32) -> f32 {
     let du = u0 - u1;
     let dv = v0 - v1;
-    (du * du + dv * dv).sqrt()
+    du * du + dv * dv
 }
 
 fn rgb_to_yuv(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
@@ -547,11 +584,7 @@ fn dark_quiet_floor_image(size: FrameSize) -> ImageFrame {
     build_image(size, |x, y| {
         let fx = x as f32 / size.width.saturating_sub(1).max(1) as f32;
         let fy = y as f32 / size.height.saturating_sub(1).max(1) as f32;
-        let mut rgb = [
-            0.035 + fy * 0.020,
-            0.038 + fy * 0.018,
-            0.044 + fy * 0.026,
-        ];
+        let mut rgb = [0.035 + fy * 0.020, 0.038 + fy * 0.018, 0.044 + fy * 0.026];
 
         let vertical_band = (fx - 0.76).abs();
         if vertical_band < 0.08 {
@@ -566,11 +599,7 @@ fn dark_quiet_floor_image(size: FrameSize) -> ImageFrame {
         let logo_radius = (logo_dx * logo_dx + logo_dy * logo_dy).sqrt();
         if logo_radius < 0.12 {
             let ring = ((0.12 - logo_radius) / 0.08).clamp(0.0, 1.0);
-            rgb = [
-                0.12 + ring * 0.62,
-                0.11 + ring * 0.54,
-                0.10 + ring * 0.30,
-            ];
+            rgb = [0.12 + ring * 0.62, 0.11 + ring * 0.54, 0.10 + ring * 0.30];
             if logo_radius < 0.055 {
                 rgb = [0.86, 0.84, 0.80];
             }
