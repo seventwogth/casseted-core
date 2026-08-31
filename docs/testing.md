@@ -27,6 +27,7 @@ Current layers:
 - calibration metrics now also track quiet-region and dark-quiet-region deltas on the synthetic set so quiet-content refinements stay measurable without introducing a larger golden-image system
 - the synthetic calibration set runs at the reference width, since below it the horizontal spatial terms are sub-pixel and the branch filters are close to inactive
 - resolution-invariance checks in `casseted-pipeline` that render a fixed relative grating and a flat field at 720, 2160, and 3600 px wide, so horizontal bandwidth response and reconstruction contamination are both verified not to drift with frame width
+- a matching vertical check that renders a flat field at 480, 1440, and 2400 px tall and asserts the dropout band count matches the reference-height count, so a per-line probability cannot fire more often just because the raster has more rows
 
 A note on the edge-retention metric:
 it is a ratio of mean *squared* horizontal steps. Total variation is conserved when a monotonic edge is blurred, so a mean-absolute ratio cannot observe bandwidth loss on step-like content and instead tracks whatever contamination the final pass adds. The squared form falls as an edge spreads and is largely insensitive to additive contamination, which is what these assertions are meant to measure.

@@ -2,7 +2,7 @@ use super::{ChromaOverrides, LumaOverrides, SignalOverrides, StillImagePipeline,
 use crate::stages::{ResolvedStillStages, effect_uniforms, resolve_still_stages};
 use casseted_gpu::{GpuContext, GpuContextDescriptor, GpuInitError};
 use casseted_shaderlib::ShaderId;
-use casseted_signal::{SignalSettings, ToneSettings, TrackingSettings, VhsModel};
+use casseted_signal::{SignalSettings, ToneSettings, TrackingSettings, VhsModel, VideoStandard};
 use casseted_testing::{image_diff_stats, load_png, reference_card_rgba8_image};
 use casseted_types::{FrameSize, ImageFrame};
 use std::fs;
@@ -33,6 +33,12 @@ const NOISE_PROBE_HEIGHT: u32 = 180;
 const NOISE_PROBE_LEVEL: u8 = 128;
 const NOISE_PROBE_CYCLES_PER_FRAME: [f32; 6] = [10.0, 20.0, 40.0, 80.0, 160.0, 240.0];
 const NOISE_PROBE_TOLERANCE: f32 = 0.45;
+// Line-oriented artifacts are specified per line of the reference raster, so a
+// taller frame must not multiply how many of them fire. Heights are exact
+// multiples of the NTSC active line count so reference lines map cleanly.
+const DROPOUT_PROBE_WIDTH: u32 = 720;
+const DROPOUT_PROBE_HEIGHTS: [u32; 3] = [480, 1440, 2400];
+const DROPOUT_PROBE_DEVIATION: f32 = 0.03;
 const CURRENT_REFERENCE_BUCKETS: [&str; 8] = [
     "01_target-look",
     "02_highlights-specular",
@@ -722,10 +728,42 @@ fn luma_contamination_reference_model() -> VhsModel {
     model
 }
 
-fn flat_field_image(width: u32) -> ImageFrame {
-    let size = FrameSize::new(width, NOISE_PROBE_HEIGHT);
+fn flat_field_image(width: u32, height: u32) -> ImageFrame {
+    let size = FrameSize::new(width, height);
     let data = vec![NOISE_PROBE_LEVEL; size.pixels() as usize * 4];
     ImageFrame::rgba8(size, data).expect("generated flat field should be valid")
+}
+
+fn dropout_reference_model() -> VhsModel {
+    // Isolate line-oriented dropout: no bandwidth loss, tone shaping, or
+    // contamination, so every deviation from the flat field is a dropout.
+    let mut model = neutral_reference_model();
+    model.noise.dropout_probability_per_line = 0.06;
+    model.noise.dropout_mean_span_us = 1.8;
+    model
+}
+
+// Number of contiguous row runs carrying a dropout. Counting runs rather than
+// rows is the point: a taller raster should spread the same events over more
+// rows, not produce more events.
+fn dropout_band_count(frame: &ImageFrame) -> u32 {
+    let width = frame.descriptor.size.width;
+    let height = frame.descriptor.size.height;
+    let mut bands = 0;
+    let mut inside = false;
+
+    for y in 0..height {
+        let peak = (0..width)
+            .map(|x| (sample_luma_and_chroma_v(frame, x, y).0 - 0.5).abs())
+            .fold(0.0_f32, f32::max);
+        let hit = peak > DROPOUT_PROBE_DEVIATION;
+        if hit && !inside {
+            bands += 1;
+        }
+        inside = hit;
+    }
+
+    bands
 }
 
 // Sparse spectral probe: total contamination power carried at a fixed set of
@@ -985,7 +1023,7 @@ fn reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available
     let powers: Vec<f32> = GRATING_WIDTHS
         .iter()
         .map(|&width| {
-            let input = flat_field_image(width);
+            let input = flat_field_image(width, NOISE_PROBE_HEIGHT);
             let output = pipeline
                 .process_with_gpu(&gpu, &input)
                 .unwrap_or_else(|error| panic!("{width}px flat field should render: {error}"));
@@ -1008,6 +1046,75 @@ fn reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available
              must be specified in reference pixels so it does not thin out as the raster grows",
         );
     }
+}
+
+#[test]
+fn line_oriented_artifacts_stay_invariant_across_frame_height_when_gpu_is_available() {
+    let gpu = match try_gpu_context() {
+        Ok(context) => context,
+        Err(GpuInitError::AdapterNotFound) => return,
+        Err(error) => panic!("failed to initialize gpu context: {error}"),
+    };
+    let pipeline = StillImagePipeline::from_vhs_model(dropout_reference_model());
+
+    let counts: Vec<u32> = DROPOUT_PROBE_HEIGHTS
+        .iter()
+        .map(|&height| {
+            let input = flat_field_image(DROPOUT_PROBE_WIDTH, height);
+            let output = pipeline
+                .process_with_gpu(&gpu, &input)
+                .unwrap_or_else(|error| panic!("{height}px flat field should render: {error}"));
+            dropout_band_count(&output)
+        })
+        .collect();
+
+    let baseline = counts[0];
+    assert!(
+        baseline > 0,
+        "reference-height flat field carried no dropout bands to compare against",
+    );
+
+    for (height, count) in DROPOUT_PROBE_HEIGHTS.iter().zip(&counts).skip(1) {
+        assert_eq!(
+            *count, baseline,
+            "dropout fired {count} times at {height}px against {baseline} at the reference \
+             height (all counts {counts:?}); a per-line probability must be drawn once per \
+             reference line, not once per output row",
+        );
+    }
+}
+
+#[test]
+fn video_standard_line_count_drives_the_vertical_reference_scale() {
+    // `VhsModel.standard` is active in exactly one role: it decides how many
+    // lines the reference raster has, which is what every line-oriented term
+    // is measured against. The two standards must therefore resolve different
+    // vertical factors for the same frame.
+    let input = flat_field_image(DROPOUT_PROBE_WIDTH, 1152);
+    let ntsc = StillImagePipeline::from_vhs_model(VhsModel::for_standard(VideoStandard::NtscM));
+    let pal = StillImagePipeline::from_vhs_model(VhsModel::for_standard(VideoStandard::Pal));
+
+    let ntsc_scale = resolve_still_stages(&input, &ntsc)
+        .frame
+        .vertical_reference_scale;
+    let pal_scale = resolve_still_stages(&input, &pal)
+        .frame
+        .vertical_reference_scale;
+
+    assert_approx_eq(ntsc_scale, 1152.0 / 480.0, "ntsc vertical_reference_scale");
+    assert_approx_eq(pal_scale, 1152.0 / 576.0, "pal vertical_reference_scale");
+}
+
+#[test]
+fn reference_scales_never_shrink_the_calibration_below_the_reference_raster() {
+    // Both factors are clamped at 1.0, which is what keeps output at or below
+    // the reference raster unchanged.
+    let input = flat_field_image(320, 240);
+    let pipeline = StillImagePipeline::default();
+    let frame = resolve_still_stages(&input, &pipeline).frame;
+
+    assert_approx_eq(frame.horizontal_reference_scale, 1.0, "horizontal clamp");
+    assert_approx_eq(frame.vertical_reference_scale, 1.0, "vertical clamp");
 }
 
 #[test]

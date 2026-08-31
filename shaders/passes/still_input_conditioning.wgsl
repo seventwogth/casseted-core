@@ -1,5 +1,7 @@
 struct EffectUniform {
     frame: vec4<f32>,
+    // (horizontal reference scale, vertical reference scale, unused, unused)
+    reference: vec4<f32>,
     input_conditioning: vec4<f32>,
     luma_degradation: vec4<f32>,
     chroma_degradation: vec4<f32>,
@@ -67,15 +69,24 @@ fn apply_tone_shaping(rgb: vec3<f32>) -> vec3<f32> {
     return clamp(rgb * scale, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// Transport terms are line-oriented, so both the vertical offset and the
+// jitter phase are resolved in reference lines. The pipeline supplies the
+// vertical factor from the standard's active line count, already clamped.
+fn vertical_reference_scale() -> f32 {
+    return max(effect.reference.y, 1.0);
+}
+
 fn conditioned_sample_uv(uv: vec2<f32>) -> vec2<f32> {
     let frame_size = effect.frame.xy;
     let inv_size = frame_inv_size();
-    let line_index = floor(uv.y * frame_size.y + effect.input_conditioning.w);
-    let line_phase = line_index + effect.frame.w * 0.5;
+    let vertical_scale = vertical_reference_scale();
+    let vertical_offset_px = effect.input_conditioning.w * vertical_scale;
+    let line_index = floor(uv.y * frame_size.y + vertical_offset_px);
+    let line_phase = line_index / vertical_scale + effect.frame.w * 0.5;
     let line_jitter = sin(line_phase * 0.37) * effect.input_conditioning.z * inv_size.x;
     return vec2<f32>(
         uv.x + line_jitter,
-        uv.y + effect.input_conditioning.w * inv_size.y,
+        uv.y + vertical_offset_px * inv_size.y,
     );
 }
 

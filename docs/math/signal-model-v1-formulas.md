@@ -110,6 +110,8 @@ and `08_dark-screen-noise`.
 | \(f\) | frame index from `FrameDescriptor.frame_index` | integer |
 | \(s_{\text{ref}}\) | reference-width scale | \(W / 720\) |
 | \(\hat{s}\) | clamped reference-width scale used by horizontal spatial constants | \(\max(s_{\text{ref}}, 1)\) |
+| \(\hat{s}_v\) | clamped reference-line scale used by line-oriented terms | \(\max(H / \texttt{active\_lines}, 1)\) |
+| \(\ell_r\) | reference-line index used by every per-line hash | \(\lfloor \ell / \hat{s}_v \rfloor\) |
 
 ### Color and working signal quantities
 
@@ -187,7 +189,9 @@ and `08_dark-screen-noise`.
 | `effect.chroma_degradation.w` | vertical blend clamped to `[0, 1]` |
 | `effect.reconstruction_output.xy` | reconstruction-contamination amplitudes `>= 0`; manual preview values are soft-capped into restrained output ranges before the final pass reshapes them into brightness-dependent luma contamination and softer chroma contamination |
 | `effect.reconstruction_output.z` | Y/C crosstalk clamped to `[0, 1]` |
-| `effect.frame.z` | model-only head-switching band height in lines; manual preview path keeps it at `0` |
+| `effect.frame.z` | model-only head-switching band height in reference lines, scaled by \(\hat{s}_v\) in the shader; manual preview path keeps it at `0` |
+| `effect.reference.x` | clamped reference-width scale \(\hat{s}\), always `>= 1` |
+| `effect.reference.y` | clamped reference-line scale \(\hat{s}_v\), always `>= 1`; derived from `VideoStandard::active_lines()`, or the NTSC line count on the manual preview path |
 | `effect.frame.w` | shared frame / procedural seed from `FrameDescriptor.frame_index` |
 | `effect.reconstruction_aux.x` | model-driven dropout line probability clamped to `[0, 0.08]`; manual preview path keeps it at `0` |
 | `effect.reconstruction_aux.y` | model-driven dropout span proxy in pixels clamped to `[0, 48 * s_ref]`; manual preview path keeps it at `0` |
@@ -196,11 +200,23 @@ and `08_dark-screen-noise`.
 | `effect.reconstruction_output.w` | bounded head-switching horizontal offset proxy in pixels; manual preview path keeps it at `0` |
 
 Current packing note:
-the compact uniform block now uses `effect.frame = (W, H, b_S, f)`. The shaders derive inverse frame size from `W` and `H`, which frees one shared lane for the model-only head-switching band while keeping the frame index in the shared frame block.
+the compact uniform block uses `effect.frame = (W, H, b_S, f)`. The shaders derive inverse frame size from `W` and `H`, which frees one shared lane for the model-only head-switching band while keeping the frame index in the shared frame block.
 
-### Horizontal Scale Invariance
+The block also carries `effect.reference = (s_hat, s_hat_v, 0, 0)`. Both factors are resolved and clamped in `stages.rs`, so the reference-raster policy has one owner instead of being restated in four shaders, and the standard-dependent line count never has to be encoded in WGSL. The two spare lanes are deliberate headroom.
 
-The still path states every horizontal spatial quantity in reference pixels at 720 px wide, then resolves it against the real frame.
+### Reference-Raster Scale Invariance
+
+The still path states every spatial quantity on a reference raster, then resolves it against the real frame.
+
+That raster is 720 samples wide and `VideoStandard::active_lines()` tall — 480 lines for `NtscM`, 576 for `Pal`. The width is fixed because both standards sample 720 per line; only the line count differs, which is why the vertical factor is the one that consults `VhsModel.standard`.
+
+The pipeline resolves both factors and passes them in `effect.reference.xy`, so the policy lives in `stages.rs` rather than being restated in each shader:
+
+\[
+\hat{s} = \max\left(\frac{W}{720}, 1\right)
+\qquad
+\hat{s}_v = \max\left(\frac{H}{\texttt{active\_lines}}, 1\right)
+\]
 
 Two kinds of term appear in the same expressions:
 
@@ -209,31 +225,33 @@ Two kinds of term appear in the same expressions:
 
 Both kinds are in pixels, so mixing them without a common scale silently makes the resolved filter shape depend on frame width. Because the shaders derive \(\hat{s}\) from `effect.frame.x`, no uniform lane is needed to carry it.
 
-Rules currently enforced:
+Rules currently enforced along the horizontal axis:
 
 - constants inside horizontal spatial terms are multiplied by \(\hat{s}\)
 - saturating mixes, \(\eta_Y\) and \(\eta_C\), are evaluated on the reference-pixel radius \(r / \hat{s}\), so attenuation strength tracks the modelled bandwidth rather than the output raster
 - horizontal noise frequencies are stated per reference pixel, so a contamination band keeps the same number of cycles across the frame at any width
 - per-pixel hash noise is sampled on the reference-pixel grid with horizontal interpolation, so it stays inside the modelled bandwidth instead of following the output raster
-- \(\hat{s}\) is clamped at `1.0`: the look is defined at the reference width, and below it the raster is already the narrower limit, so the calibration is scaled up but never down
 
-Because the interpolation weight is exactly zero when \(\hat{s} = 1\), all of the above reduce to the reference-width forms, and output at or below 720 px is unchanged bit for bit.
+Rules currently enforced along the vertical axis:
 
-Consequence: a given relative spatial frequency is attenuated by the same amount at any output width at or above the reference width, the chroma-versus-luma hierarchy of section `4.4` stays intact instead of flattening as resolution grows, and a high-resolution render no longer reads cleaner than the same content at the reference width.
+- every per-line hash is drawn once per reference line \(\lfloor y / \hat{s}_v \rfloor\), so a probability stated per line does not fire more often on a taller raster
+- quantities stated in lines are multiplied by \(\hat{s}_v\): the head-switching band height, its seam falloff, and the still-frame vertical offset
+- the jitter phase advances per reference line, so transport wobble keeps the same vertical period
+- single-line neighbourhoods step by \(\hat{s}_v\): the chroma vertical blend, dropout concealment, and the vertical half of the quiet-region probe
+
+Both factors are clamped at `1.0`: the look is defined on the reference raster, and below it the raster is already the narrower limit, so the calibration is scaled up but never down. Because every interpolation weight is exactly zero at \(\hat{s} = \hat{s}_v = 1\), all of the above reduce to the reference forms, and output at or below the reference raster is unchanged bit for bit.
+
+Consequence: a given relative spatial frequency is attenuated by the same amount at any output size at or above the reference raster, the chroma-versus-luma hierarchy of section `4.4` stays intact instead of flattening as resolution grows, a high-resolution render no longer reads cleaner than the same content at the reference raster, and line-oriented artifacts keep their specified rate and relative thickness instead of multiplying with the row count.
 
 Regression anchors in `casseted-pipeline`:
 
 - `horizontal_bandwidth_response_stays_resolution_invariant_when_gpu_is_available` renders a fixed relative grating at 720, 2160, and 3600 px wide and asserts the modulation transfer stays within a bounded spread for both branches
 - `reconstruction_contamination_stays_resolution_invariant_when_gpu_is_available` renders a flat field at the same widths and asserts the contamination power carried at a fixed set of cycles-per-frame does not fall away as the raster grows
+- `line_oriented_artifacts_stay_invariant_across_frame_height_when_gpu_is_available` renders a flat field at 480, 1440, and 2400 px tall and asserts the number of dropout bands matches the reference-height count
 
-The stage-oriented cases in `stage_regression.rs` still run below the reference width and do not exercise either property. The calibration cases in `calibration.rs` now run at the reference width, so they observe the calibrated regime itself, but they render at a single width and therefore cannot see drift either.
+The stage-oriented cases in `stage_regression.rs` still run below the reference raster and do not exercise these properties. The calibration cases in `calibration.rs` run at the reference width, so they observe the calibrated regime itself, but they render at a single size and therefore cannot see drift either.
 
-Terms still expressed in absolute pixels:
-
-- the per-line contamination and phase terms, which are functions of \(\ell\) only
-- the single-line vertical neighbourhoods used by the chroma vertical blend, dropout concealment, and head-switching band
-
-These are scan-line quantities rather than horizontal ones. Normalizing them needs an explicit reference height in the model, not the width-derived factor used here, so they are deferred. The one exception is the quiet-region probe of section `5.3`, which is an isotropic gradient estimate rather than a scan-line term and currently steps by \(\hat{s}\) on both axes as an approximation.
+One approximation remains, in the fine noise carrier of section `5.3`: it interpolates horizontally but holds one value per reference line vertically. That makes the finest carrier line-correlated on tall rasters rather than isotropic, which matches how analog line noise reads and avoids the hard vertical blocking a nearest-neighbour grid on both axes would produce.
 
 ## 3. Input And Working Representation
 
@@ -693,9 +711,9 @@ Vertical chroma blend:
 \]
 
 \[
-C_V(x, y) = \beta_N C_S(x, y - 1)
+C_V(x, y) = \beta_N C_S(x, y - \hat{s}_v)
 + (1 - 2\beta_N)C_S(x, y)
-+ \beta_N C_S(x, y + 1)
++ \beta_N C_S(x, y + \hat{s}_v)
 \]
 
 Deterministic chroma phase bias:
@@ -802,8 +820,10 @@ These are implemented now because they already existed in the prototype path, bu
 ### 5.1 Line Jitter
 
 \[
-\Delta x(\ell, f) = p_J \cdot s_{\text{ref}} \cdot \sin\left(0.37(\ell + 0.5f)\right)
+\Delta x(\ell, f) = p_J \cdot s_{\text{ref}} \cdot \sin\left(0.37\left(\frac{\ell}{\hat{s}_v} + 0.5f\right)\right)
 \]
+
+The phase advances per reference line, so the wobble keeps the same vertical period regardless of how many rows the raster has.
 
 The current fragment pass also applies a vertical still-frame offset:
 
@@ -811,14 +831,14 @@ The current fragment pass also applies a vertical still-frame offset:
 \Delta y = \delta_V
 \]
 
-and evaluates transport-adjusted coordinates as:
+where \(\delta_V\) is stated in lines, so the still path applies it as \(\delta_V \hat{s}_v\) output rows, and evaluates transport-adjusted coordinates as:
 
 \[
-\ell = \left\lfloor vH + \delta_V \right\rfloor
+\ell = \left\lfloor vH + \delta_V \hat{s}_v \right\rfloor
 \qquad
 u' = u + \frac{\Delta x(\ell, f)}{W}
 \qquad
-v' = v + \frac{\delta_V}{H}
+v' = v + \frac{\delta_V \hat{s}_v}{H}
 \]
 
 Mapping:
@@ -854,20 +874,20 @@ r_S = \operatorname{clamp}(13.5\tau_H s_{\text{ref}}, -32s_{\text{ref}}, 32s_{\t
 
 If either \(b_S \le \varepsilon\) or \(|r_S| \le \varepsilon\), the current still-image path leaves this subset inactive.
 
-Otherwise define the top of the switching band:
+The band height is stated in lines, so the still path resolves it to \(b_S \hat{s}_v\) output rows and it covers the same share of the picture at any height. Otherwise define the top of the switching band:
 
 \[
-y_S = \max(0, H - b_S)
+y_S = \max(0, H - b_S \hat{s}_v)
 \]
 
 For line \(\ell \ge y_S\), derive a restrained band/seam support:
 
 \[
-p_S(\ell) = \operatorname{clamp}\left(\frac{\ell - y_S + 0.5}{\max(b_S, 1)}, 0, 1\right)
+p_S(\ell) = \operatorname{clamp}\left(\frac{\ell - y_S + 0.5}{\max(b_S \hat{s}_v, 1)}, 0, 1\right)
 \]
 
 \[
-\lambda_S(\ell) = \operatorname{mix}(0.82, 1.0, \operatorname{hash}(\ell + 173,\; f + 19))
+\lambda_S(\ell) = \operatorname{mix}(0.82, 1.0, \operatorname{hash}(\ell_r + 173,\; f + 19))
 \]
 
 \[
@@ -875,7 +895,7 @@ m_B(\ell) = p_S(\ell)^2 \lambda_S(\ell)
 \]
 
 \[
-m_E(\ell) = \left(1 - \operatorname{smoothstep}(0, 1.5, \ell - y_S)\right)\lambda_S(\ell)
+m_E(\ell) = \left(1 - \operatorname{smoothstep}(0, 1.5\hat{s}_v, \ell - y_S)\right)\lambda_S(\ell)
 \]
 
 Then sample one horizontally shifted signal inside the same line:
@@ -894,7 +914,7 @@ g_C^S = 0.28m_B + 0.18m_E
 
 \[
 \eta_S(x, \ell) = 0.025m_E(\ell)\left(
-\operatorname{hash}\left(\left\lfloor \tfrac{0.25x}{\hat{s}} \right\rfloor + 191,\; \ell + f + 13\right) - 0.5
+\operatorname{hash}\left(\left\lfloor \tfrac{0.25x}{\hat{s}} \right\rfloor + 191,\; \ell_r + f + 13\right) - 0.5
 \right)
 \]
 
@@ -960,8 +980,8 @@ s(t) = t^2(3 - 2t)
 \[
 b(x, \ell; \kappa, \sigma_x, \sigma_y) =
 \operatorname{mix}\left(
-\xi(\lfloor \kappa' \rfloor + \sigma_x,\; \sigma_y\ell + f + 1.37\sigma_x),
-\xi(\lfloor \kappa' \rfloor + \sigma_x + 1,\; \sigma_y\ell + f + 1.37\sigma_x),
+\xi(\lfloor \kappa' \rfloor + \sigma_x,\; \sigma_y\ell_r + f + 1.37\sigma_x),
+\xi(\lfloor \kappa' \rfloor + \sigma_x + 1,\; \sigma_y\ell_r + f + 1.37\sigma_x),
 s(\operatorname{fract}(\kappa'))
 \right)
 \]
@@ -971,15 +991,17 @@ Every \(\kappa\) below is therefore stated in cells per reference pixel, so a ba
 The same reasoning applies to the finest noise carrier, which would otherwise sit above the modelled luma bandwidth on a high-resolution raster. It is sampled on the reference-pixel grid and interpolated horizontally:
 
 \[
-\tilde{\xi}(x, y; \sigma) =
+\tilde{\xi}(x, \ell_r; \sigma) =
 \operatorname{mix}\left(
-\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + \sigma_x,\; y + \sigma_y\right),
-\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + 1 + \sigma_x,\; y + \sigma_y\right),
+\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + \sigma_x,\; \ell_r + \sigma_y\right),
+\xi\left(\left\lfloor \tfrac{x}{\hat{s}} \right\rfloor + 1 + \sigma_x,\; \ell_r + \sigma_y\right),
 s\left(\operatorname{fract}\left(\tfrac{x}{\hat{s}}\right)\right)
 \right)
 \]
 
-At \(\hat{s} = 1\) the fractional part is zero for integer \(x\), so \(\tilde{\xi}(x, y; \sigma) = \xi(x + \sigma_x,\; y + \sigma_y)\) exactly.
+It interpolates horizontally but holds one value per reference line, so on a tall raster the finest carrier becomes line-correlated rather than isotropic. That is deliberate: it matches how analog line noise reads, and it avoids the hard vertical blocking that a nearest-neighbour grid on both axes would produce.
+
+At \(\hat{s} = \hat{s}_v = 1\) the fractional part is zero for integer \(x\) and \(\ell_r = \ell\), so \(\tilde{\xi}(x, \ell; \sigma) = \xi(x + \sigma_x,\; \ell + \sigma_y)\) exactly.
 
 Let the final pass reuse the stronger of dropout and head-switching support as one restrained disturbance-backoff term:
 
@@ -994,8 +1016,8 @@ For the current quiet-content refinement, the same pass also derives a compact l
 \max\left(
 |Y_L^\star - Y_L^\star(x - \hat{s}, y)|,
 |Y_L^\star - Y_L^\star(x + \hat{s}, y)|,
-|Y_L^\star - Y_L^\star(x, y - \hat{s})|,
-|Y_L^\star - Y_L^\star(x, y + \hat{s})|
+|Y_L^\star - Y_L^\star(x, y - \hat{s}_v)|,
+|Y_L^\star - Y_L^\star(x, y + \hat{s}_v)|
 \right)
 \]
 
@@ -1004,8 +1026,8 @@ For the current quiet-content refinement, the same pass also derives a compact l
 \max\left(
 \|C_D^\star - C_D^\star(x - \hat{s}, y)\|,
 \|C_D^\star - C_D^\star(x + \hat{s}, y)\|,
-\|C_D^\star - C_D^\star(x, y - \hat{s})\|,
-\|C_D^\star - C_D^\star(x, y + \hat{s})\|
+\|C_D^\star - C_D^\star(x, y - \hat{s}_v)\|,
+\|C_D^\star - C_D^\star(x, y + \hat{s}_v)\|
 \right)
 \]
 
@@ -1045,15 +1067,15 @@ g_Y = \operatorname{mix}(1.0, 0.72, \gamma_T)
 \eta_{YQ} =
 0.52b(x, y; 0.045, 107, 0.13)
 + 0.32b(x, y; 0.018, 149, 0.09)
-+ 0.16\xi(0.22y + 173,\; f + 59)
++ 0.16\xi(0.22\ell_r + 173,\; f + 59)
 \]
 
 \[
 n_Y^\star =
 a_Y m_Y g_Y \left(
-0.45(1 - q_L)\tilde{\xi}(x, y;\, (f, 3))
+0.45(1 - q_L)\tilde{\xi}(x, \ell_r;\, (f, 3))
 + (0.35 + 0.09q_L)b(x, y; 0.12, 11, 0.31)
-+ (0.20 - 0.04q_L)\xi(y + 29,\; f + 13)
++ (0.20 - 0.04q_L)\xi(\ell_r + 29,\; f + 13)
 + q_L(0.26 + 0.24d_Q)\eta_{YQ}
 \right)
 \]
@@ -1069,23 +1091,23 @@ g_C^D = \operatorname{mix}(1.0, 0.45, \gamma_T)
 \]
 
 \[
-\eta_U = 0.72b(x, y; 0.08, 47, 0.23) + 0.28\xi(0.5y + 97,\; f + 23)
+\eta_U = 0.72b(x, y; 0.08, 47, 0.23) + 0.28\xi(0.5\ell_r + 97,\; f + 23)
 \]
 
 \[
-\eta_V = 0.72b(x, y; 0.06, 71, 0.19) + 0.28\xi(0.5y + 131,\; f + 31)
+\eta_V = 0.72b(x, y; 0.06, 71, 0.19) + 0.28\xi(0.5\ell_r + 131,\; f + 31)
 \]
 
 \[
-\eta_{UQ} = 0.74b(x, y; 0.035, 181, 0.11) + 0.26\xi(0.20y + 227,\; f + 67)
+\eta_{UQ} = 0.74b(x, y; 0.035, 181, 0.11) + 0.26\xi(0.20\ell_r + 227,\; f + 67)
 \]
 
 \[
-\eta_{VQ} = 0.74b(x, y; 0.028, 211, 0.15) + 0.26\xi(0.18y + 257,\; f + 79)
+\eta_{VQ} = 0.74b(x, y; 0.028, 211, 0.15) + 0.26\xi(0.18\ell_r + 257,\; f + 79)
 \]
 
 \[
-\nu_\phi = 0.74b(x, y; 0.05, 89, 0.17) + 0.26\xi(0.35y + 157,\; f + 43)
+\nu_\phi = 0.74b(x, y; 0.05, 89, 0.17) + 0.26\xi(0.35\ell_r + 157,\; f + 43)
 \]
 
 \[
@@ -1136,17 +1158,17 @@ where \(\tau_D = \texttt{VhsNoiseSettings.dropout\_mean\_span\_us}\).
 For line \(\ell\), activate a dropout only if:
 
 \[
-h_\ell = \operatorname{hash}(\ell + 17,\; f + 5) < q_D
+h_\ell = \operatorname{hash}(\ell_r + 17,\; f + 5) < q_D
 \]
 
 If the line is active, derive a segment span and center:
 
 \[
-s_\ell = \max(\hat{s},\; s_D \cdot \operatorname{mix}(0.6, 1.8, \operatorname{hash}(\ell + 41,\; f + 9)))
+s_\ell = \max(\hat{s},\; s_D \cdot \operatorname{mix}(0.6, 1.8, \operatorname{hash}(\ell_r + 41,\; f + 9)))
 \]
 
 \[
-x_\ell = W \cdot \operatorname{hash}(\ell + 59,\; f + 21)
+x_\ell = W \cdot \operatorname{hash}(\ell_r + 59,\; f + 21)
 \]
 
 \[
@@ -1167,7 +1189,7 @@ m_B(x, \ell) =
 \operatorname{mix}\left(
 0.82,\;
 1.0,\;
-\operatorname{hash}\left(\left\lfloor \tfrac{0.35x}{\hat{s}} \right\rfloor + \ell,\; f + 37\right)
+\operatorname{hash}\left(\left\lfloor \tfrac{0.35x}{\hat{s}} \right\rfloor + \ell_r,\; f + 37\right)
 \right)
 \]
 
@@ -1178,11 +1200,11 @@ m_D(x, \ell) = m_S(x, \ell)m_B(x, \ell)
 The current still-image v1 approximation then builds a local concealment blend:
 
 \[
-Y_C(x, y) = 0.55Y_L(x, y - 1) + 0.45Y_L(x, y + 1)
+Y_C(x, y) = 0.55Y_L(x, y - \hat{s}_v) + 0.45Y_L(x, y + \hat{s}_v)
 \]
 
 \[
-C_C(x, y) = 0.55C_D(x, y - 1) + 0.45C_D(x, y + 1)
+C_C(x, y) = 0.55C_D(x, y - \hat{s}_v) + 0.45C_D(x, y + \hat{s}_v)
 \]
 
 \[
@@ -1190,13 +1212,13 @@ C_C(x, y) = 0.55C_D(x, y - 1) + 0.45C_D(x, y + 1)
 m_D(x, \ell)\operatorname{mix}\left(
 0.35,\;
 0.72,\;
-\operatorname{hash}(\ell + 73,\; f + 11)
+\operatorname{hash}(\ell_r + 73,\; f + 11)
 \right)
 \]
 
 \[
 \eta_D(x, y) =
-0.08\gamma_D(x, \ell)\,\tilde{\xi}(x, y;\, (f, 29))
+0.08\gamma_D(x, \ell)\,\tilde{\xi}(x, \ell_r;\, (f, 29))
 \]
 
 \[
@@ -1300,7 +1322,8 @@ Documented here but not implemented yet:
 
 - `VhsInputSettings.{transfer,temporal_sampling}` as runtime selectors
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
-- `VhsModel.standard` as a runtime selector once a concrete model already carries resolved field values
+
+`VhsModel.standard` is now active in one narrow role: `VideoStandard::active_lines()` supplies the vertical reference-raster factor that every line-oriented term is measured against. The remaining `VideoStandard` timings stay unprojected, since they are temporal and the still path has no temporal model.
 
 `VhsInputSettings.matrix` now sits on a narrower boundary than the other input fields:
 the formal surface currently exposes only `VideoMatrix::Bt601`, and the active WGSL path already hardcodes the matching BT.601-like working transform.

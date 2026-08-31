@@ -31,6 +31,19 @@ impl VideoStandard {
             Self::Pal => 64.0,
         }
     }
+
+    /// Active picture lines per frame.
+    ///
+    /// This is the vertical counterpart to the fixed 720-sample reference line
+    /// the still path already uses horizontally: together they define the
+    /// raster the look is calibrated against, so line-oriented terms can be
+    /// resolved against the real frame instead of the output raster.
+    pub const fn active_lines(self) -> u32 {
+        match self {
+            Self::NtscM => 480,
+            Self::Pal => 576,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,5 +376,11 @@ mod tests {
     fn video_standard_timings_are_exposed_for_future_mappings() {
         assert_eq!(VideoStandard::NtscM.field_rate_hz(), 59.94);
         assert_eq!(VideoStandard::Pal.line_period_us(), 64.0);
+    }
+
+    #[test]
+    fn active_lines_differ_per_standard() {
+        assert_eq!(VideoStandard::NtscM.active_lines(), 480);
+        assert_eq!(VideoStandard::Pal.active_lines(), 576);
     }
 }

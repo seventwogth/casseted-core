@@ -1,5 +1,7 @@
 struct EffectUniform {
     frame: vec4<f32>,
+    // (horizontal reference scale, vertical reference scale, unused, unused)
+    reference: vec4<f32>,
     input_conditioning: vec4<f32>,
     luma_degradation: vec4<f32>,
     chroma_degradation: vec4<f32>,
@@ -15,8 +17,6 @@ struct VsOutput {
 @group(0) @binding(0) var working_texture: texture_2d<f32>;
 @group(0) @binding(1) var working_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
-
-const REFERENCE_WIDTH_PX: f32 = 720.0;
 
 fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     let clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -36,17 +36,12 @@ fn highlight_mask(value: f32, threshold: f32) -> f32 {
 }
 
 // Horizontal spatial terms reach this pass already multiplied by the
-// reference-width factor `s_ref = W / 720`. Every fixed constant below is
-// stated in reference pixels and is re-scaled through `reference_scale()`, so
-// the resolved filter shape stays identical above the reference width instead
-// of drifting with frame width.
-//
-// The factor is clamped at 1.0 on purpose: the look is defined at the
-// reference width, and below it the raster itself is already the narrower
-// limit, so the still path keeps the reference-width shape instead of scaling
-// the calibration down.
+// reference-width factor. Every fixed constant below is stated in reference
+// pixels and is re-scaled through `reference_scale()`, so the resolved filter
+// shape stays identical above the reference raster instead of drifting with
+// frame width. The pipeline resolves and clamps the factor.
 fn reference_scale() -> f32 {
-    return max(effect.frame.x / REFERENCE_WIDTH_PX, 1.0);
+    return max(effect.reference.x, 1.0);
 }
 
 fn bandwidth_mix(blur_px: f32) -> f32 {

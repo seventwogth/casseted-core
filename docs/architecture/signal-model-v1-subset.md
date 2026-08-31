@@ -138,9 +138,11 @@ Use this as the field-level companion to:
 
 ### Standard metadata
 
-- `VhsModel.standard`
+- `VhsModel.standard` together with `VideoStandard::active_lines()`
+  Current state: active, in one narrow role. The still runtime reads the active line count (480 for `NtscM`, 576 for `Pal`) to resolve the vertical reference-raster factor in `effect.reference.y`, which every line-oriented term is measured against: dropout probability per line, the head-switching band height, jitter phase, the vertical offset, per-line contamination, and the single-line vertical neighbourhoods.
+  Boundary note: this is a line-geometry activation, not a general standard-selector layer. Changing the standard changes what counts as one line; it does not branch the pass chain.
 - `VideoStandard::{frame_rate_hz, field_rate_hz, line_period_us}`
-  Current state: used to define formal presets and future mapping context, but the still runtime does not branch on them once a concrete `VhsModel` already contains resolved field values.
+  Current state: used to define formal presets and future mapping context, but the still runtime does not branch on them. They are temporal quantities, and the still path has no temporal model.
 
 ## Most Justified Next Activations
 

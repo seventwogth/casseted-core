@@ -3,8 +3,12 @@ use crate::projection::REFERENCE_WIDTH_PX;
 use casseted_signal::{SignalSettings, VhsModel};
 use casseted_types::ImageFrame;
 
-pub(crate) const EFFECT_UNIFORM_FLOATS: usize = 24;
+pub(crate) const EFFECT_UNIFORM_FLOATS: usize = 28;
 const BT601_SAMPLES_PER_US: f32 = 13.5;
+// Vertical counterpart to `REFERENCE_WIDTH_PX` when no formal model is present.
+// The manual preview path has no `VideoStandard` to consult, so it assumes the
+// same NTSC raster the default model uses.
+const FALLBACK_ACTIVE_LINES: f32 = 480.0;
 
 // The still-image path resolves controls into explicit logical stages and then
 // packs them into a shared uniform block used across the compact multi-pass run.
@@ -24,6 +28,12 @@ pub(crate) struct FrameStage {
     pub(crate) inv_width: f32,
     pub(crate) inv_height: f32,
     pub(crate) frame_index: f32,
+    // Resolved reference-raster factors handed to the shaders so the spatial
+    // calibration policy lives here rather than being restated in WGSL. Both
+    // are clamped at 1.0: the look is defined on the reference raster and is
+    // scaled up for larger frames but never down.
+    pub(crate) horizontal_reference_scale: f32,
+    pub(crate) vertical_reference_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,6 +79,7 @@ pub(crate) struct ReconstructionOutputStage {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct EffectUniforms {
     pub(crate) frame: [f32; 4],
+    pub(crate) reference: [f32; 4],
     pub(crate) input_conditioning: [f32; 4],
     pub(crate) luma_degradation: [f32; 4],
     pub(crate) chroma_degradation: [f32; 4],
@@ -86,6 +97,12 @@ impl From<ResolvedStillStages> for EffectUniforms {
                 // reuse the third lane for the model-only head-switching band.
                 stages.reconstruction_output.head_switching_band_lines,
                 stages.frame.frame_index,
+            ],
+            reference: [
+                stages.frame.horizontal_reference_scale,
+                stages.frame.vertical_reference_scale,
+                0.0,
+                0.0,
             ],
             input_conditioning: [
                 stages.input_conditioning.highlight_soft_knee,
@@ -133,6 +150,10 @@ impl EffectUniforms {
             self.frame[1],
             self.frame[2],
             self.frame[3],
+            self.reference[0],
+            self.reference[1],
+            self.reference[2],
+            self.reference[3],
             self.input_conditioning[0],
             self.input_conditioning[1],
             self.input_conditioning[2],
@@ -174,6 +195,9 @@ pub(crate) fn resolve_still_stages(
     let width = input.descriptor.size.width as f32;
     let height = input.descriptor.size.height as f32;
     let reference_scale = (width / REFERENCE_WIDTH_PX).max(0.0);
+    let active_lines = model
+        .map(|vhs| vhs.standard.active_lines() as f32)
+        .unwrap_or(FALLBACK_ACTIVE_LINES);
 
     ResolvedStillStages {
         frame: FrameStage {
@@ -182,6 +206,8 @@ pub(crate) fn resolve_still_stages(
             inv_width: width.recip(),
             inv_height: height.recip(),
             frame_index: input.descriptor.frame_index as f32,
+            horizontal_reference_scale: (width / REFERENCE_WIDTH_PX).max(1.0),
+            vertical_reference_scale: (height / active_lines.max(1.0)).max(1.0),
         },
         input_conditioning: resolve_input_conditioning_stage(signal, reference_scale),
         luma_degradation: resolve_luma_degradation_stage(signal, reference_scale, model),

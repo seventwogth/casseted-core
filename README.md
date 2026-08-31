@@ -176,6 +176,7 @@ Current testing is intentionally lightweight:
   neutral / low-saturation scenes,
   and UI-like detail
 - resolution-invariance checks at 720, 2160, and 3600 px wide: a fixed relative grating asserts the luma and chroma bandwidth response does not drift with frame width, and a flat field asserts reconstruction contamination does not thin out as the raster grows
+- a vertical counterpart at 480, 1440, and 2400 px tall asserting that line-oriented artifacts keep their specified rate instead of multiplying with the output row count
 - corpus-backed sanity checks over `assets/reference-images/` so the bucket structure, PNG loading, processed output, and compiled-runtime parity all stay covered
 - parity checks that the compiled runtime path matches the direct GPU path across both the synthetic calibration set and the reference-image corpus
 - shared helpers in [`docs/testing.md`](./docs/testing.md)

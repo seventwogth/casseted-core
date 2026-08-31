@@ -332,7 +332,9 @@ Formal fields intentionally not projected into the current still runtime subset:
 
 - `VhsInputSettings.{transfer,temporal_sampling}`
 - `VhsDecodeSettings.output_transfer`
-- `VhsModel.standard` once concrete preset values are already carried by the rest of the model
+
+`VhsModel.standard` is no longer on that list.
+It now resolves through `VideoStandard::active_lines()` into the vertical reference-raster factor packed in `effect.reference.y`, which every line-oriented term is measured against. This is a narrow activation rather than a general standard-selector layer: the runtime consults the standard for the active line count and for nothing else, and the remaining `VideoStandard` timings stay unprojected.
 
 `VhsInputSettings.matrix` now sits on a narrower boundary:
 the formal surface currently exposes only `VideoMatrix::Bt601`, and the still-image WGSL path hardcodes the matching BT.601-like working transform.
@@ -414,10 +416,11 @@ The current repository now implements a reference-consistent subset of v1 as fiv
 - the final pass reuses the transport-conditioned line phase only as a procedural seed for transport-adjacent reconstruction disturbance and noise/dropout placement; it does not reapply full-frame transport resampling to luma/chroma textures
 - horizontal luma and chroma band limiting is resolved against the reference width, so the same relative spatial frequency is attenuated the same way at any output width at or above 720 px; see the horizontal scale-invariance rules in [`../math/signal-model-v1-formulas.md`](../math/signal-model-v1-formulas.md)
 - reconstruction contamination follows the same rule: noise band frequencies are stated per reference pixel and the finest noise carrier is sampled on the reference-pixel grid, so a high-resolution render does not read cleaner than the same content at the reference width
+- line-oriented terms are resolved against the standard's active line count through `VideoStandard::active_lines()`, so dropout rate, head-switching band height, jitter period, and the vertical neighbourhoods keep their specified geometry instead of multiplying with the output row count
 
 Still deferred:
 
-- an explicit reference height in the model, so the remaining scan-line quantities can be normalized: the per-line contamination and phase terms and the single-line vertical neighbourhoods used by chroma vertical blend, dropout concealment, and head switching are still expressed in absolute pixels. The horizontal terms of the reconstruction pass are already resolved against the reference width, so what remains is specifically the vertical axis
+- a temporal model, which is what the remaining `VideoStandard` timings would need before they could be projected
 - input-selector-driven runtime branching from `VhsInputSettings.{transfer,temporal_sampling}`
 - explicit post-decode output-transfer shaping from `VhsDecodeSettings.output_transfer`
 - temporal model

@@ -1,5 +1,7 @@
 struct EffectUniform {
     frame: vec4<f32>,
+    // (horizontal reference scale, vertical reference scale, unused, unused)
+    reference: vec4<f32>,
     input_conditioning: vec4<f32>,
     luma_degradation: vec4<f32>,
     chroma_degradation: vec4<f32>,
@@ -15,8 +17,6 @@ struct VsOutput {
 @group(0) @binding(0) var working_texture: texture_2d<f32>;
 @group(0) @binding(1) var working_sampler: sampler;
 @group(0) @binding(2) var<uniform> effect: EffectUniform;
-
-const REFERENCE_WIDTH_PX: f32 = 720.0;
 
 fn sample_working_signal(uv: vec2<f32>) -> vec3<f32> {
     let clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -45,17 +45,17 @@ fn sample_luma_px(pixel_pos: vec2<f32>) -> f32 {
 }
 
 // Horizontal spatial terms reach this pass already multiplied by the
-// reference-width factor `s_ref = W / 720`. Every fixed constant below is
-// stated in reference pixels and is re-scaled through `reference_scale()`, so
-// the coarse chroma grid keeps the same relative width above the reference
-// width instead of turning finer as frame width grows.
-//
-// The factor is clamped at 1.0 on purpose: the look is defined at the
-// reference width, and below it the raster itself is already the narrower
-// limit, so the still path keeps the reference-width shape instead of scaling
-// the calibration down.
+// reference-width factor. Every fixed constant below is stated in reference
+// pixels and is re-scaled through `reference_scale()`, so the coarse chroma
+// grid keeps the same relative width above the reference raster instead of
+// turning finer as frame width grows. The pipeline resolves and clamps both
+// factors; the vertical one carries the standard-dependent active line count.
 fn reference_scale() -> f32 {
-    return max(effect.frame.x / REFERENCE_WIDTH_PX, 1.0);
+    return max(effect.reference.x, 1.0);
+}
+
+fn vertical_reference_scale() -> f32 {
+    return max(effect.reference.y, 1.0);
 }
 
 fn bandwidth_mix(blur_px: f32) -> f32 {
@@ -188,10 +188,13 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
     let pixel_pos = uv * effect.frame.xy - vec2<f32>(0.5, 0.5);
     let chroma_center = pixel_pos + vec2<f32>(chroma_offset_px, 0.0);
     let edge_guard = local_luma_edge(pixel_pos);
+    // The vertical blend models adjacent scan lines, so it steps by the
+    // reference-line spacing rather than by one output row.
+    let line_step_px = vertical_reference_scale();
     if (chroma_blur_px <= 1e-4) {
         let chroma_base = sample_chroma_px(chroma_center);
-        let chroma_up = sample_chroma_px(chroma_center - vec2<f32>(0.0, 1.0));
-        let chroma_down = sample_chroma_px(chroma_center + vec2<f32>(0.0, 1.0));
+        let chroma_up = sample_chroma_px(chroma_center - vec2<f32>(0.0, line_step_px));
+        let chroma_down = sample_chroma_px(chroma_center + vec2<f32>(0.0, line_step_px));
         let chroma_vertical = chroma_up * 0.18 + chroma_base * 0.64 + chroma_down * 0.18;
         let chroma_resolved = mix(
             chroma_base,
@@ -220,7 +223,7 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
         chroma_bandwidth_mix,
     );
     let chroma_up = reconstruct_chroma_line(
-        chroma_center - vec2<f32>(0.0, 1.0),
+        chroma_center - vec2<f32>(0.0, line_step_px),
         lowpass_span_px,
         cell_size_px,
         chroma_offset_px,
@@ -229,7 +232,7 @@ fn degrade_chroma(uv: vec2<f32>) -> vec2<f32> {
         chroma_bandwidth_mix,
     );
     let chroma_down = reconstruct_chroma_line(
-        chroma_center + vec2<f32>(0.0, 1.0),
+        chroma_center + vec2<f32>(0.0, line_step_px),
         lowpass_span_px,
         cell_size_px,
         chroma_offset_px,
